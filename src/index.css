@@ -1,0 +1,12 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* AQUÍ ESTÁN TUS COLORES GLOBALES */
+    /* Si cambias estos códigos HEX, toda la página cambiará al instante */
+    --color-autoblue: #1e3b8b;
+    --color-autored: #d9252a;
+  }
+}
