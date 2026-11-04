@@ -1,5 +1,6 @@
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
-import { useEffect } from 'react'; // <-- Asegúrate de que esté importado
+import { useEffect } from 'react';
+import { supabase } from './supabase'; // Asegúrate de ajustar esta ruta si tu cliente está en otra carpeta
 
 import Navbar from './components/Navbar';
 import ChatWindow from './components/ChatWindow';
@@ -24,43 +25,38 @@ import AdminDashboard from './pages/dashboards/admin/AdminDashboard';
 function App() {
 
   // ==========================================
-  // ATRAPADOR DE SESIÓN DE GOOGLE (Mejorado)
+  // ATRAPADOR DE SESIÓN DE GOOGLE (Corregido)
   // ==========================================
-  // ==========================================
-  // ATRAPADOR DE SESIÓN DE GOOGLE (Mejorado Anti-Suspendidos)
-  // ==========================================
-useEffect(() => {
-    const hash = window.location.hash;
-    
-    if (hash && hash.includes("access_token")) {
-      const params = new URLSearchParams(hash.substring(1));
-      const accessToken = params.get("access_token");
-      const type = params.get("type"); // 🔥 DETECTAMOS EL TIPO DE ENLACE
+  useEffect(() => {
+    const handleGoogleAuth = async () => {
+      const hash = window.location.hash;
+      
+      if (hash && hash.includes("access_token")) {
+        const params = new URLSearchParams(hash.substring(1));
+        const accessToken = params.get("access_token");
+        const type = params.get("type"); // DETECTAMOS EL TIPO DE ENLACE
 
-      // 1. SI ES UN ENLACE DE RECUPERAR CONTRASEÑA
-      if (type === "recovery") {
-        // Guardamos el token temporalmente solo para actualizar la contraseña
-        localStorage.setItem('recovery_token', accessToken);
-        window.history.replaceState(null, null, '/actualizar-password');
-        window.location.reload();
-        return; // ⛔ Detenemos aquí, NO iniciamos sesión
-      }
-
-      // 2. SI ES UN INICIO DE SESIÓN CON GOOGLE NORMAL
-      const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
-      const SUPABASE_USER_URL = 'https://rdhihhudubthlmuzgawx.supabase.co/rest/v1/user';
-
-      fetch(SUPABASE_USER_URL, {
-        headers: {
-          'apikey': SUPABASE_ANON_KEY,
-          'Authorization': `Bearer ${accessToken}`
+        // 1. SI ES UN ENLACE DE RECUPERAR CONTRASEÑA
+        if (type === "recovery") {
+          localStorage.setItem('recovery_token', accessToken);
+          window.history.replaceState(null, null, '/actualizar-password');
+          window.location.reload();
+          return; // Detenemos aquí, NO iniciamos sesión
         }
-      })
-      .then(res => res.json())
-      .then(async (user) => { 
-        if (!user.user_metadata) user.user_metadata = {};
 
+        // 2. SI ES UN INICIO DE SESIÓN CON GOOGLE NORMAL
         try {
+          // Consultamos al proyecto activo mediante la librería de Supabase
+          const { data: { user }, error } = await supabase.auth.getUser(accessToken);
+
+          if (error || !user) {
+            console.error("Error al obtener datos del usuario de Supabase:", error);
+            return;
+          }
+
+          if (!user.user_metadata) user.user_metadata = {};
+
+          // Sincronización con tu backend en Railway
           const syncResponse = await fetch('https://backautored-production.up.railway.app/api/login/sync', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -83,18 +79,21 @@ useEffect(() => {
             user.user_metadata.nombre = syncData.nombre;
           }
 
+          // Guardamos la sesión y los datos del usuario en localStorage
           localStorage.setItem('session_token', accessToken);
           localStorage.setItem('user_data', JSON.stringify(user));
           
+          // Limpiamos el hash de la URL y recargamos para aplicar la sesión
           window.history.replaceState(null, null, window.location.pathname);
           window.location.reload(); 
 
         } catch (err) {
-          console.error("Error verificando estado en Java:", err);
+          console.error("Error en la sincronización:", err);
         }
-      })
-      .catch(err => console.error("Error verificando cuenta:", err));
-    }
+      }
+    };
+
+    handleGoogleAuth();
   }, []);
   // ==========================================
 
@@ -106,7 +105,7 @@ useEffect(() => {
         
         <main className="flex-grow">
           <Routes>
-           <Route path="/nosotros" element={<SobreNosotros />} />
+            <Route path="/nosotros" element={<SobreNosotros />} />
             <Route path="/" element={<Home />} />
             <Route path="/inicio" element={<Home />} />    
             <Route path="/catalogo" element={<Catalog />} />
@@ -117,7 +116,6 @@ useEffect(() => {
             <Route path="/directorio" element={<DirectorioSucursales />} />
             <Route path="/actualizar-password" element={<UpdatePassword />} />
             <Route path="/recuperar-password" element={<RecuperarPassword />} />
-            
             
             <Route path="/dashboard/customer" element={
               <ProtectedRoute allowedRoles={['comprador']}>
