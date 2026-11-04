@@ -48,7 +48,7 @@ useEffect(() => {
 
       // 2. SI ES UN INICIO DE SESIÓN CON GOOGLE NORMAL
       const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
-      const SUPABASE_USER_URL = 'https://rdhntqsabwcbulnapfcg.supabase.co/auth/v1/user';
+      const SUPABASE_USER_URL = 'https://rdhihhudubthlmuzgawx.supabase.co/rest/v1/user';
 
       fetch(SUPABASE_USER_URL, {
         headers: {
