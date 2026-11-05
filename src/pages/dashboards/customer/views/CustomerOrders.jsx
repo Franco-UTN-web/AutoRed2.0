@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { supabase } from '../../../../supabase'; // Ajusta la ruta a tu archivo de supabase
+import { supabase } from '@/supabase';
 
 export default function CustomerOrders({ usuario }) {
   const [historialContactos, setHistorialContactos] = useState([]);
@@ -11,7 +11,6 @@ export default function CustomerOrders({ usuario }) {
       if (!usuario?.id) return;
       
       try {
-        // Traemos el historial ordenado por fecha (los más recientes primero)
         const { data, error } = await supabase
           .from('historial_contactos')
           .select('*')
@@ -30,7 +29,6 @@ export default function CustomerOrders({ usuario }) {
     fetchHistorial();
   }, [usuario]);
 
-  // Formateador de fecha amigable (ej: "12 de Jul, 2026")
   const formatearFecha = (fechaISO) => {
     const opciones = { day: 'numeric', month: 'short', year: 'numeric' };
     return new Date(fechaISO).toLocaleDateString('es-MX', opciones);
@@ -55,8 +53,6 @@ export default function CustomerOrders({ usuario }) {
           ) : (
             historialContactos.map(contacto => (
               <div key={contacto.id} className="border border-gray-200 rounded-xl p-5 hover:shadow-md hover:border-green-500 transition-all group bg-gray-50 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                
-                {/* Info del Producto y Tienda */}
                 <div className="flex-1">
                   <div className="flex items-center gap-2 mb-1">
                     <span className="bg-green-100 text-green-700 p-1.5 rounded-lg">
@@ -73,7 +69,6 @@ export default function CustomerOrders({ usuario }) {
                   </p>
                 </div>
 
-                {/* Precio y Acción */}
                 <div className="flex sm:flex-col items-center sm:items-end justify-between sm:justify-center border-t sm:border-t-0 sm:border-l border-gray-200 pt-4 sm:pt-0 sm:pl-6 w-full sm:w-auto">
                   <div className="text-left sm:text-right">
                     <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-0.5">Precio de Oferta</p>
@@ -86,7 +81,6 @@ export default function CustomerOrders({ usuario }) {
                     Ver Producto
                   </Link>
                 </div>
-
               </div>
             ))
           )}

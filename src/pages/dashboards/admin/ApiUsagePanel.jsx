@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { supabase } from '@/supabase';
 
 export default function ApiUsagePanel() {
   const [metricas, setMetricas] = useState({
@@ -12,46 +13,47 @@ export default function ApiUsagePanel() {
   const [historialReciente, setHistorialReciente] = useState([]);
   const [cargando, setCargando] = useState(true);
 
- useEffect(() => {
-    const fetchEstadisticas = async () => {
-      try {
-        const response = await fetch('https://backautored-production.up.railway.app/api/chat/estadisticas');
-        if (response.ok) {
-          const data = await response.json();
-          
-          // 🔥 AQUÍ ESTÁ EL TRUCO: Calculamos el costo ($0.15 dólares por cada 1,000,000 de tokens)
-          const costoReal = (data.tokensConsumidos / 1000000) * 0.15;
+  const fetchEstadisticas = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('chat_logs')
+        .select('*')
+        .order('fecha', { ascending: false });
 
-          setMetricas(prev => ({
-            ...prev,
-            peticionesTotales: data.peticionesTotales,
-            tokensConsumidos: data.tokensConsumidos >= 1000 ? `${(data.tokensConsumidos / 1000).toFixed(1)}k` : data.tokensConsumidos,
-            costoEstimado: `$${costoReal.toFixed(4)}` // <-- Muestra $0.0000
-          }));
+      if (error) throw error;
 
-          // Formateamos las fechas que llegan de Java
-          const historialFormateado = data.historial.map(log => {
-            const fechaObj = new Date(log.fecha);
-            return {
-              id: log.id,
-              usuario: log.rolUsuario.toUpperCase(),
-              prompt: log.prompt,
-              fecha: fechaObj.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
-              tokens: log.tokensEstimados
-            };
-          });
+      const totalPeticiones = data?.length || 0;
+      const totalTokens = data?.reduce((acc, curr) => acc + (curr.tokensEstimados || 0), 0) || 0;
+      const costoReal = (totalTokens / 1000000) * 0.15;
 
-          setHistorialReciente(historialFormateado);
-        }
-      } catch (error) {
-        console.error("Error cargando estadísticas del chat:", error);
-      } finally {
-        setCargando(false);
-      }
-    };
+      setMetricas(prev => ({
+        ...prev,
+        peticionesTotales: totalPeticiones,
+        tokensConsumidos: totalTokens >= 1000 ? `${(totalTokens / 1000).toFixed(1)}k` : totalTokens,
+        costoEstimado: `$${costoReal.toFixed(4)}`
+      }));
 
+      const historialFormateado = (data || []).slice(0, 15).map(log => {
+        const fechaObj = new Date(log.fecha);
+        return {
+          id: log.id,
+          usuario: (log.rolUsuario || 'CLIENTE').toUpperCase(),
+          prompt: log.prompt,
+          fecha: fechaObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          tokens: log.tokensEstimados || 0
+        };
+      });
+
+      setHistorialReciente(historialFormateado);
+    } catch (error) {
+      console.error("Error cargando estadísticas del chat desde Supabase:", error);
+    } finally {
+      setCargando(false);
+    }
+  };
+
+  useEffect(() => {
     fetchEstadisticas();
-    // Opcional: Actualizar automáticamente cada 30 segundos
     const intervalo = setInterval(fetchEstadisticas, 30000);
     return () => clearInterval(intervalo);
   }, []);
@@ -70,7 +72,6 @@ export default function ApiUsagePanel() {
         <p className="text-gray-500 font-medium mt-1">Métricas de uso, consumo de tokens y rendimiento del asistente virtual.</p>
       </div>
 
-      {/* TARJETAS DE MÉTRICAS */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
         <div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm border-l-4 border-l-autoblue">
           <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Peticiones Históricas</p>
@@ -95,7 +96,6 @@ export default function ApiUsagePanel() {
         </div>
       </div>
 
-      {/* TABLA HISTORIAL */}
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
         <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
           <h3 className="font-black text-gray-900">Últimas Consultas</h3>

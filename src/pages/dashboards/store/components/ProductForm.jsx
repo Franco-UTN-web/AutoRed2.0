@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { supabase } from '@/supabase'; // Ajusta la ruta relativa a tu cliente de Supabase
 
 // DICCIONARIOS LOCALES
 const vehiculosDb = {
@@ -10,11 +11,13 @@ const vehiculosDb = {
   "Honda": ["Civic", "City", "CR-V", "Accord", "HR-V"],
   "Universal": ["Aplica para cualquier modelo"]
 };
+
 const aniosDisponibles = ["Todos los años", ...Array.from(new Array(37), (val, index) => (new Date().getFullYear() + 1) - index).map(String)];
+
 const marcasRefacciones = [
   "ACDelco", "Bardahl", "Boge", "Bosch", "Brembo", "Castrol", 
   "Dai", "Fritec", "Gates", "Genérica", "Gonher", "KYB", 
-  "LUK", "NGK", "Roshfrans", "Valeo", "Wagner", , "Purolator"
+  "LUK", "NGK", "Roshfrans", "Valeo", "Wagner", "Mobil", "Purolator"
 ];
 
 export default function ProductForm({ miEstablecimiento, itemAEditar, onClose, onSuccess, mostrarNotificacion }) {
@@ -34,15 +37,23 @@ export default function ProductForm({ miEstablecimiento, itemAEditar, onClose, o
   useEffect(() => {
     if (itemAEditar) {
       setFormData({
-        categoria: itemAEditar.pieza?.categoria || 'Motor', marca: itemAEditar.pieza?.marca || '',
-        nombre_comercial: itemAEditar.pieza?.nombre_comercial || '', descripcion: itemAEditar.pieza?.descripcion || '',
-        nivel_calidad: itemAEditar.pieza?.nivel_calidad || 'Premium', stock: itemAEditar.stock || 1,
-        precio_lista: itemAEditar.precio_lista || 0, precio_oferta: itemAEditar.precio_oferta || 0,
-        establecimiento_id: miEstablecimiento?.id, tipo_vehiculo: itemAEditar.pieza?.tipo_vehiculo || 'Auto',
-        marca_vehiculo: itemAEditar.pieza?.marca_vehiculo || '', modelo: itemAEditar.pieza?.modelo || '',
-        anio_vehiculo: itemAEditar.pieza?.anio_vehiculo || '', imagen_url: itemAEditar.pieza?.imagen_url || '',
-        numero_parte: itemAEditar.pieza?.numero_parte || '', condicion: itemAEditar.pieza?.condicion || 'Nueva',
-        garantia: itemAEditar.pieza?.garantia || 'Sin garantía' // Agregado fallback de garantía
+        categoria: itemAEditar.pieza?.categoria || 'Motor', 
+        marca: itemAEditar.pieza?.marca || '',
+        nombre_comercial: itemAEditar.pieza?.nombre_comercial || '', 
+        descripcion: itemAEditar.pieza?.descripcion || '',
+        nivel_calidad: itemAEditar.pieza?.nivel_calidad || 'Premium', 
+        stock: itemAEditar.stock || 1,
+        precio_lista: itemAEditar.precio_lista || 0, 
+        precio_oferta: itemAEditar.precio_oferta || 0,
+        establecimiento_id: miEstablecimiento?.id, 
+        tipo_vehiculo: itemAEditar.pieza?.tipo_vehiculo || 'Auto',
+        marca_vehiculo: itemAEditar.pieza?.marca_vehiculo || '', 
+        modelo: itemAEditar.pieza?.modelo || '',
+        anio_vehiculo: itemAEditar.pieza?.anio_vehiculo || '', 
+        imagen_url: itemAEditar.pieza?.imagen_url || '',
+        numero_parte: itemAEditar.pieza?.numero_parte || '', 
+        condicion: itemAEditar.pieza?.condicion || 'Nueva',
+        garantia: itemAEditar.pieza?.garantia || 'Sin garantía'
       });
     }
   }, [itemAEditar, miEstablecimiento]);
@@ -56,51 +67,118 @@ export default function ProductForm({ miEstablecimiento, itemAEditar, onClose, o
     });
   };
 
- const subirImagenASupabase = async (file) => {
-    // Usamos FormData porque estamos enviando un archivo físico
-    const formData = new FormData();
-    formData.append('file', file);
-    
-    // Hablamos con NUESTRO servidor local en lugar de Supabase directo
-    const response = await fetch('https://backautored-production.up.railway.app/api/archivos/subir', {
-      method: 'POST',
-      body: formData // No le ponemos Content-Type, el navegador lo calcula solo al ver un FormData
-    });
+  const subirImagenASupabase = async (file) => {
+    const fileExt = file.name.split('.').pop();
+    const fileName = `${Date.now()}_${Math.random().toString(36).substring(2)}.${fileExt}`;
+    const filePath = `refacciones/${fileName}`;
 
-    if (!response.ok) {
-      throw new Error("El servidor no pudo procesar la imagen.");
+    const { error: uploadError } = await supabase.storage
+      .from('documentos')
+      .upload(filePath, file);
+
+    if (uploadError) {
+      throw uploadError;
     }
-    
-    const data = await response.json();
-    return data.url; // Esto ya contiene la URL pública directa
+
+    const { data } = supabase.storage
+      .from('documentos')
+      .getPublicUrl(filePath);
+
+    return data.publicUrl;
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!miEstablecimiento?.id) {
+      mostrarNotificacion("Error: No se encontró el establecimiento activo.", "error");
+      return;
+    }
+
     setCargando(true);
     try {
       let urlFinalImagen = formData.imagen_url;
       if (imagenSeleccionada) {
-        mostrarNotificacion("Subiendo imagen a la nube...");
+        mostrarNotificacion("Subiendo imagen a Supabase Storage...");
         urlFinalImagen = await subirImagenASupabase(imagenSeleccionada);
       }
-      
-      const payloadCompleto = { ...formData, imagen_url: urlFinalImagen };
-      const urlFetch = idEdicion ? `https://backautored-production.up.railway.app/api/inventario/actualizar/${idEdicion}` : 'https://backautored-production.up.railway.app/api/inventario/agregar';
-      const metodoFetch = idEdicion ? 'PUT' : 'POST';
-      
-      const response = await fetch(urlFetch, {
-        method: metodoFetch,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payloadCompleto)
-      });
 
-      if (response.ok) {
-        mostrarNotificacion(idEdicion ? "¡Producto actualizado correctamente!" : "¡Refacción guardada exitosamente!");
-        onSuccess();
+      if (idEdicion) {
+        // ACTUALIZACIÓN EN SUPABASE
+        if (itemAEditar?.pieza_id) {
+          const { error: errPieza } = await supabase
+            .from('piezas')
+            .update({
+              categoria: formData.categoria,
+              marca: formData.marca,
+              nombre_comercial: formData.nombre_comercial,
+              descripcion: formData.descripcion,
+              nivel_calidad: formData.nivel_calidad,
+              tipo_vehiculo: formData.tipo_vehiculo,
+              marca_vehiculo: formData.marca_vehiculo,
+              modelo: formData.modelo,
+              anio_vehiculo: formData.anio_vehiculo,
+              imagen_url: urlFinalImagen,
+              numero_parte: formData.numero_parte,
+              condicion: formData.condicion,
+              garantia: formData.garantia
+            })
+            .eq('id', itemAEditar.pieza_id);
+
+          if (errPieza) throw errPieza;
+        }
+
+        const { error: errProd } = await supabase
+          .from('productos')
+          .update({
+            stock: formData.stock,
+            precio_lista: formData.precio_lista,
+            precio_oferta: formData.precio_oferta
+          })
+          .eq('id', idEdicion);
+
+        if (errProd) throw errProd;
+
+        mostrarNotificacion("¡Producto actualizado correctamente!");
       } else {
-        mostrarNotificacion("Error en el servidor de Java.", "error");
+        // CREACIÓN EN SUPABASE
+        const { data: nuevaPieza, error: errPieza } = await supabase
+          .from('piezas')
+          .insert([{
+            categoria: formData.categoria,
+            marca: formData.marca,
+            nombre_comercial: formData.nombre_comercial,
+            descripcion: formData.descripcion,
+            nivel_calidad: formData.nivel_calidad,
+            tipo_vehiculo: formData.tipo_vehiculo,
+            marca_vehiculo: formData.marca_vehiculo,
+            modelo: formData.modelo,
+            anio_vehiculo: formData.anio_vehiculo,
+            imagen_url: urlFinalImagen,
+            numero_parte: formData.numero_parte,
+            condicion: formData.condicion,
+            garantia: formData.garantia
+          }])
+          .select()
+          .single();
+
+        if (errPieza) throw errPieza;
+
+        const { error: errProd } = await supabase
+          .from('productos')
+          .insert([{
+            establecimiento_id: miEstablecimiento.id,
+            pieza_id: nuevaPieza.id,
+            stock: formData.stock,
+            precio_lista: formData.precio_lista,
+            precio_oferta: formData.precio_oferta
+          }]);
+
+        if (errProd) throw errProd;
+
+        mostrarNotificacion("¡Refacción guardada exitosamente!");
       }
+
+      onSuccess();
     } catch (error) {
       mostrarNotificacion("Error: " + error.message, "error");
     } finally {
@@ -108,7 +186,6 @@ export default function ProductForm({ miEstablecimiento, itemAEditar, onClose, o
     }
   };
 
-  // TU DISEÑO ORIGINAL, INTACTO
   return (
     <form onSubmit={handleSubmit} className="mb-8 p-6 bg-gray-50 rounded-xl border border-gray-200 space-y-6 shadow-inner border-t-4 border-t-autoblue animate-fade-in">
       
@@ -167,7 +244,7 @@ export default function ProductForm({ miEstablecimiento, itemAEditar, onClose, o
           </div>
         </div>
         
-        {/* NUEVO CAMPO: DESCRIPCIÓN */}
+        {/* DESCRIPCIÓN */}
         <div className="mt-4">
           <label className="block text-xs font-black uppercase text-gray-500 mb-1">Descripción Detallada <span className="lowercase font-normal text-autoblue">(Opcional)</span></label>
           <textarea name="descripcion" rows="2" value={formData.descripcion} onChange={handleInputChange} className="w-full bg-white border border-gray-200 rounded-lg p-2.5 text-sm resize-none" placeholder="Añade detalles sobre el material o instrucciones especiales..." />

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
+import { supabase } from '../supabase';
 
 // 🔧 PARCHE VITE: Arreglo para los íconos de Leaflet
 import icon from 'leaflet/dist/images/marker-icon.png';
@@ -16,12 +17,14 @@ let DefaultIcon = L.icon({
 L.Marker.prototype.options.icon = DefaultIcon;
 // ---------------------------------------------------------
 
-const centroPorDefecto = [19.4326, -99.1332];
+const centroPorDefecto = [19.4326, -99.1332]; // Coordenadas del centro de México
 
 function RecenterMap({ coordenadas, zoom }) {
   const map = useMap();
   useEffect(() => {
-    map.setView(coordenadas, zoom);
+    if (coordenadas && coordenadas[0] && coordenadas[1]) {
+      map.setView(coordenadas, zoom);
+    }
   }, [coordenadas, zoom, map]);
   return null;
 }
@@ -34,42 +37,65 @@ export default function DirectorioSucursales() {
   const [mapCenter, setMapCenter] = useState(centroPorDefecto);
   const [tiendaSeleccionada, setTiendaSeleccionada] = useState(null);
   const [coordenadasMarcador, setCoordenadasMarcador] = useState(null);
-
-  // 🔥 NUEVO ESTADO: Para controlar el texto de la alerta flotante
   const [alertaMapa, setAlertaMapa] = useState('');
 
   useEffect(() => {
     const fetchSucursales = async () => {
+      setCargando(true);
       try {
-        const response = await fetch('https://backautored-production.up.railway.app/api/establecimientos/todos');
-        if (response.ok) {
-          const data = await response.json();
-          const activas = data.filter(tienda => tienda.estado === 'APROBADO');
+        // 🟢 Petición directa a la tabla establecimientos en Supabase
+        const { data, error } = await supabase
+          .from('establecimientos')
+          .select('*');
+
+        if (error) throw error;
+
+        if (data) {
+          // Filtramos establecimientos activos o aprobados (si existe la columna estado/activo)
+          const activas = data.filter(tienda => 
+            !tienda.estado || 
+            tienda.estado === 'APROBADO' || 
+            tienda.estado === 'aprobado' || 
+            tienda.activo === true
+          );
           setSucursales(activas);
+
+          // Si hay al menos una tienda con coordenadas, centramos el mapa en la primera
+          const primeraConCoords = activas.find(t => t.latitud && t.longitud);
+          if (primeraConCoords) {
+            setMapCenter([parseFloat(primeraConCoords.latitud), parseFloat(primeraConCoords.longitud)]);
+          }
         }
       } catch (error) {
-        console.error("Error al cargar sucursales:", error);
+        console.error("Error al cargar establecimientos desde Supabase:", error);
       } finally {
         setCargando(false);
       }
     };
+
     fetchSucursales();
   }, []);
 
   const ubicarEnMapa = async (tienda) => {
     setTiendaSeleccionada(tienda);
-    setAlertaMapa(''); // Limpiamos cualquier alerta previa
+    setAlertaMapa(''); // Limpiamos alertas previas
     
-    // 🔥 1. LA MAGIA: Si ya tenemos las coordenadas exactas de la BD, las usamos instantáneamente
+    // 1. Usar coordenadas exactas de la base de datos de Supabase si existen
     if (tienda.latitud && tienda.longitud) {
       const coordsExactas = [parseFloat(tienda.latitud), parseFloat(tienda.longitud)];
       setMapCenter(coordsExactas);
       setCoordenadasMarcador(coordsExactas);
-      return; // Detenemos la función aquí, ya no necesitamos internet ni APIs
+      return;
     }
 
-    // 2. FALLBACK (Plan B): Solo si es una tienda vieja que no tiene coordenadas guardadas
-    const direccionCompleta = `${tienda.calle} ${tienda.numero}, ${tienda.colonia}, ${tienda.ciudad || tienda.municipio}, ${tienda.estadoRep}, México`;
+    // 2. PLAN B: Nominatim (Búsqueda por dirección para sucursales antiguas)
+    const calle = tienda.calle || '';
+    const numero = tienda.numero || '';
+    const colonia = tienda.colonia || '';
+    const ciudad = tienda.ciudad || tienda.municipio || '';
+    const estadoRep = tienda.estado_rep || tienda.estadoRep || '';
+
+    const direccionCompleta = `${calle} ${numero}, ${colonia}, ${ciudad}, ${estadoRep}, México`;
 
     try {
       const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(direccionCompleta)}`);
@@ -90,6 +116,7 @@ export default function DirectorioSucursales() {
       setAlertaMapa("Hubo un problema al contactar al servidor de mapas. 🔧");
     }
   };
+
   return (
     <div className="min-h-screen bg-gray-50 py-10 font-sans">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -101,7 +128,7 @@ export default function DirectorioSucursales() {
 
         <div className="flex flex-col lg:flex-row gap-6 lg:h-[75vh]">
           
-        {/* COLUMNA IZQUIERDA (LISTA): Le damos una altura fija de 400px en móvil, y altura completa en PC */}
+          {/* COLUMNA IZQUIERDA (LISTA DE SUCURSALES) */}
           <div className="w-full lg:w-1/3 bg-white border border-gray-200 rounded-2xl shadow-sm flex flex-col overflow-hidden h-[400px] lg:h-full">
             <div className="p-4 border-b border-gray-100 bg-gray-50 shrink-0">
               <h3 className="font-black text-gray-900">Sucursales Activas ({sucursales.length})</h3>
@@ -113,33 +140,41 @@ export default function DirectorioSucursales() {
               ) : sucursales.length === 0 ? (
                 <div className="text-center py-10 text-gray-500 font-medium">No hay sucursales operando en este momento.</div>
               ) : (
-                sucursales.map(tienda => (
-                  <div 
-                    key={tienda.id} 
-                    onClick={() => ubicarEnMapa(tienda)}
-                    className={`p-4 rounded-xl border cursor-pointer transition-all ${tiendaSeleccionada?.id === tienda.id ? 'border-autoblue bg-blue-50 ring-1 ring-autoblue shadow-sm' : 'border-gray-200 bg-white hover:border-gray-300 hover:shadow-sm'}`}
-                  >
-                    <h4 className="font-black text-gray-900">{tienda.nombre}</h4>
-                    <p className="text-xs text-gray-500 mt-1 font-medium line-clamp-2">
-                      {tienda.calle} #{tienda.numero}, Col. {tienda.colonia}, {tienda.municipio}, {tienda.estadoRep}. CP: {tienda.codigoPostal}
-                    </p>
-                    <div className="mt-3 flex items-center gap-2 text-sm">
-                      <span className="flex items-center gap-1 text-autoblue font-bold">
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
-                        Ver en mapa
-                      </span>
+                sucursales.map(tienda => {
+                  const calle = tienda.calle || '';
+                  const numero = tienda.numero || '';
+                  const colonia = tienda.colonia || '';
+                  const ciudad = tienda.ciudad || tienda.municipio || '';
+                  const estadoRep = tienda.estado_rep || tienda.estadoRep || '';
+                  const cp = tienda.codigo_postal || tienda.codigoPostal || '';
+
+                  return (
+                    <div 
+                      key={tienda.id} 
+                      onClick={() => ubicarEnMapa(tienda)}
+                      className={`p-4 rounded-xl border cursor-pointer transition-all ${tiendaSeleccionada?.id === tienda.id ? 'border-autoblue bg-blue-50 ring-1 ring-autoblue shadow-sm' : 'border-gray-200 bg-white hover:border-gray-300 hover:shadow-sm'}`}
+                    >
+                      <h4 className="font-black text-gray-900">{tienda.nombre}</h4>
+                      <p className="text-xs text-gray-500 mt-1 font-medium line-clamp-2">
+                        {calle} #{numero}, Col. {colonia}, {ciudad}, {estadoRep}. CP: {cp}
+                      </p>
+                      <div className="mt-3 flex items-center gap-2 text-sm">
+                        <span className="flex items-center gap-1 text-autoblue font-bold">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                          Ver en mapa
+                        </span>
+                      </div>
                     </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           </div>
 
-       {/* COLUMNA DERECHA (MAPA) */}
-          {/* 🔥 1. Cambiamos min-h por h-[400px] estricto para móvil */}
+          {/* COLUMNA DERECHA (MAPA) */}
           <div className="w-full lg:w-2/3 bg-gray-200 border border-gray-200 rounded-2xl shadow-sm relative overflow-hidden z-0 h-[400px] lg:h-full">
             
-            {/* 🔥 ALERTA PERSONALIZADA FLOTANTE 🔥 */}
+            {/* ALERTA FLOTANTE DEL MAPA */}
             {alertaMapa && (
               <div className="absolute top-4 left-4 right-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl shadow-xl z-[1000] flex items-center justify-between animate-fade-in text-xs font-bold">
                 <div className="flex items-center gap-2">
@@ -159,11 +194,10 @@ export default function DirectorioSucursales() {
               </div>
             )}
 
-            {/* 🔥 2. Agregamos el prop "key" atado a las coordenadas */}
             <MapContainer 
               key={`${mapCenter[0]}-${mapCenter[1]}`} 
               center={mapCenter} 
-              zoom={5} 
+              zoom={tiendaSeleccionada ? 16 : 6} 
               style={{ width: '100%', height: '100%' }}
               className="z-0"
             >
@@ -172,29 +206,38 @@ export default function DirectorioSucursales() {
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
               />
               
-              <RecenterMap coordenadas={mapCenter} zoom={tiendaSeleccionada ? 16 : 5} />
+              <RecenterMap coordenadas={mapCenter} zoom={tiendaSeleccionada ? 16 : 6} />
 
-              {coordenadasMarcador && tiendaSeleccionada && (
-                <Marker position={coordenadasMarcador}>
-                  <Popup>
-                    <div className="p-1 max-w-[200px] text-center">
-                      <h4 className="font-black text-gray-900 text-sm">{tiendaSeleccionada.nombre}</h4>
-                      <p className="text-xs text-gray-600 mt-1">{tiendaSeleccionada.calle} #{tiendaSeleccionada.numero}</p>
-                      <a 
-                        href={`https://wa.me/${tiendaSeleccionada.telefono}`} 
-                        target="_blank" 
-                        rel="noopener noreferrer" 
-                        className="mt-2 text-xs bg-green-500 hover:bg-green-600 text-white font-bold px-2 py-1 rounded block transition-colors"
-                      >
-                        Contactar WhatsApp
-                      </a>
-                    </div>
-                  </Popup>
-                </Marker>
-              )}
+              {/* Dibujar pines de TODAS las sucursales en el mapa */}
+              {sucursales.map(t => {
+                if (!t.latitud || !t.longitud) return null;
+                const pos = [parseFloat(t.latitud), parseFloat(t.longitud)];
+
+                return (
+                  <Marker key={`pin-${t.id}`} position={pos} eventHandlers={{ click: () => setTiendaSeleccionada(t) }}>
+                    <Popup>
+                      <div className="p-1 max-w-[200px] text-center">
+                        <h4 className="font-black text-gray-900 text-sm">{t.nombre}</h4>
+                        <p className="text-xs text-gray-600 mt-1">{t.calle} #{t.numero}</p>
+                        {t.telefono && (
+                          <a 
+                            href={`https://wa.me/${t.telefono.replace(/\D/g, '')}`} 
+                            target="_blank" 
+                            rel="noopener noreferrer" 
+                            className="mt-2 text-xs bg-green-500 hover:bg-green-600 text-white font-bold px-2 py-1.5 rounded block transition-colors"
+                          >
+                            Contactar WhatsApp
+                          </a>
+                        )}
+                      </div>
+                    </Popup>
+                  </Marker>
+                );
+              })}
+
             </MapContainer>
 
-            {/* Aviso de Motor */}
+            {/* Crédito del Motor */}
             <div className="absolute bottom-4 right-4 bg-white/90 backdrop-blur px-3 py-1.5 rounded-lg border border-gray-200 shadow-sm text-[10px] font-bold text-gray-500 pointer-events-none z-[999]">
               Motor: OpenStreetMap (Gratis)
             </div>

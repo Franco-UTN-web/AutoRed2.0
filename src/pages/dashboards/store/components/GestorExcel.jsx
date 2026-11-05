@@ -1,47 +1,123 @@
 import { useState } from 'react';
+import * as XLSX from 'xlsx';
+import { supabase } from '@/supabase'; // Ajusta la ruta a tu supabaseClient
 
 export default function GestorExcel({ establecimientoId, onUploadSuccess }) {
   const [archivo, setArchivo] = useState(null);
   const [mensaje, setMensaje] = useState('');
   const [cargando, setCargando] = useState(false);
 
-  // URL base de tu backend en producción
-  const API_URL = 'https://backautored-production.up.railway.app/api/inventario';
-
   const manejarDescarga = () => {
-    // 🔥 Ahora la descarga es instantánea desde la carpeta pública de React 🔥
     window.location.href = '/plantilla_autored.xlsx';
   };
 
   const subirArchivo = async () => {
     if (!archivo) {
-      setMensaje('Por favor selecciona un archivo Excel (.xlsx).');
+      setMensaje('Por favor selecciona un archivo Excel (.xlsx, .xls).');
+      return;
+    }
+
+    if (!establecimientoId) {
+      setMensaje('Error: No se identificó el establecimiento activo.');
       return;
     }
 
     setCargando(true);
     setMensaje('');
-    const formData = new FormData();
-    formData.append('file', archivo);
-    formData.append('establecimiento_id', establecimientoId);
 
     try {
-      // Apuntamos al nuevo endpoint de Excel
-      const response = await fetch(`${API_URL}/upload-excel`, {
-        method: 'POST',
-        body: formData,
-      });
-
-      const text = await response.text();
-      setMensaje(text);
-
-      if (response.ok) {
-        setArchivo(null); // Limpiamos el selector
-        if (onUploadSuccess) onUploadSuccess(); // Recargamos el inventario
-      }
+      // 1. Leer el archivo Excel en el navegador
+      const buffer = await archivo.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: 'array' });
+      const sheetName = workbook.SheetNames[0];
+      const sheet = workbook.Sheets[sheetName];
       
+      // Convertir la hoja a JSON
+      const filas = XLSX.utils.sheet_to_json(sheet);
+
+      if (!filas || filas.length === 0) {
+        setMensaje('El archivo Excel está vacío o no tiene el formato esperado.');
+        setCargando(false);
+        return;
+      }
+
+      let procesadosExitosos = 0;
+
+      // 2. Iterar filas e insertar en Supabase
+      for (const fila of filas) {
+        // Mapear columnas según los encabezados de la plantilla Excel
+        const categoria = fila['categoria'] || fila['Categoría'] || 'Motor';
+        const marca = fila['marca'] || fila['Marca'] || '';
+        const nombre_comercial = fila['nombre_comercial'] || fila['Nombre Comercial'] || '';
+        const descripcion = fila['descripcion'] || fila['Descripción'] || '';
+        const nivel_calidad = fila['nivel_calidad'] || fila['Nivel Calidad'] || 'Premium';
+        const tipo_vehiculo = fila['tipo_vehiculo'] || fila['Tipo Vehículo'] || 'Auto';
+        const marca_vehiculo = fila['marca_vehiculo'] || fila['Marca Vehículo'] || '';
+        const modelo = fila['modelo'] || fila['Modelo'] || '';
+        const anio_vehiculo = fila['anio_vehiculo'] || fila['Año'] || '';
+        const numero_parte = fila['numero_parte'] || fila['Número de Parte'] || '';
+        const condicion = fila['condicion'] || fila['Condición'] || 'Nueva';
+        const garantia = fila['garantia'] || fila['Garantía'] || 'Sin garantía';
+        const imagen_url = fila['imagen_url'] || fila['URL Imagen'] || '';
+
+        const stock = parseInt(fila['stock'] || fila['Stock'] || 0, 10);
+        const precio_lista = parseFloat(fila['precio_lista'] || fila['Precio Lista'] || 0);
+        const precio_oferta = parseFloat(fila['precio_oferta'] || fila['Precio Oferta'] || 0);
+
+        if (!nombre_comercial || !marca) continue; // Saltar filas sin datos requeridos
+
+        // A. Insertar la pieza en la tabla 'piezas'
+        const { data: nuevaPieza, error: errPieza } = await supabase
+          .from('piezas')
+          .insert([{
+            categoria,
+            marca,
+            nombre_comercial,
+            descripcion,
+            nivel_calidad,
+            tipo_vehiculo,
+            marca_vehiculo,
+            modelo,
+            anio_vehiculo,
+            numero_parte,
+            condicion,
+            garantia,
+            imagen_url
+          }])
+          .select()
+          .single();
+
+        if (errPieza) {
+          console.error('Error insertando pieza desde Excel:', errPieza);
+          continue;
+        }
+
+        // B. Crear la relación de inventario en la tabla 'productos'
+        const { error: errProd } = await supabase
+          .from('productos')
+          .insert([{
+            establecimiento_id: establecimientoId,
+            pieza_id: nuevaPieza.id,
+            stock,
+            precio_lista,
+            precio_oferta
+          }]);
+
+        if (errProd) {
+          console.error('Error insertando producto desde Excel:', errProd);
+          continue;
+        }
+
+        procesadosExitosos++;
+      }
+
+      setMensaje(`¡Carga masiva completada! Se registraron ${procesadosExitosos} refacciones exitosamente.`);
+      setArchivo(null);
+      if (onUploadSuccess) onUploadSuccess();
+
     } catch (error) {
-      setMensaje('Error conectando con el servidor en la nube.');
+      console.error('Error procesando Excel:', error);
+      setMensaje('Error al leer el archivo Excel: ' + error.message);
     } finally {
       setCargando(false);
     }

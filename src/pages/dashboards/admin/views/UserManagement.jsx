@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
+import { supabase } from '@/supabase';
 
 export default function UserManagement() {
   const [compradores, setCompradores] = useState([]);
   const [cargando, setCargando] = useState(true);
-  const [searchTerm, setSearchTerm] = useState(''); // NUEVO ESTADO PARA BUSCADOR
+  const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
     cargarUsuarios();
@@ -11,35 +12,38 @@ export default function UserManagement() {
 
   const cargarUsuarios = async () => {
     try {
-      const response = await fetch('https://backautored-production.up.railway.app/api/admin/compradores');
-      if (response.ok) {
-        const data = await response.json();
-        setCompradores(data);
-      }
+      const { data, error } = await supabase
+        .from('perfiles')
+        .select('*');
+
+      if (error) throw error;
+      setCompradores(data || []);
     } catch (error) {
-      console.error("Error al cargar los compradores:", error);
+      console.error("Error al cargar los usuarios desde Supabase:", error);
     } finally {
       setCargando(false);
     }
   };
 
-  const alternarEstadoUsuario = async (id) => {
+  const alternarEstadoUsuario = async (id, estadoActual) => {
     try {
-      const response = await fetch(`https://backautored-production.up.railway.app/api/admin/compradores/${id}/suspender`, {
-        method: 'PUT'
-      });
-      
-      if (response.ok) {
-        setCompradores(prev => 
-          prev.map(usuario => 
-            usuario.id === id ? { ...usuario, activo: !usuario.activo } : usuario
-          )
-        );
-      } else {
-        alert("Hubo un error al cambiar el estado del usuario.");
-      }
+      const nuevoEstado = estadoActual === false ? true : false;
+
+      const { error } = await supabase
+        .from('perfiles')
+        .update({ activo: nuevoEstado })
+        .eq('id', id);
+
+      if (error) throw error;
+
+      setCompradores(prev => 
+        prev.map(usuario => 
+          usuario.id === id ? { ...usuario, activo: nuevoEstado } : usuario
+        )
+      );
     } catch (error) {
-      console.error("Error de conexión:", error);
+      console.error("Error al actualizar usuario en Supabase:", error);
+      alert("Hubo un error al cambiar el estado del usuario.");
     }
   };
 
@@ -50,7 +54,7 @@ export default function UserManagement() {
     }
     const encabezados = ["ID_Usuario", "Nombre_Registrado", "Rol", "Estado"];
     const filas = compradores.map(u => [
-      u.id, `"${u.nombre || 'Sin nombre'}"`, u.rol, u.activo === false ? 'Suspendido' : 'Activo'
+      u.id, `"${u.nombre || 'Sin nombre'}"`, u.rol || 'CLIENTE', u.activo === false ? 'Suspendido' : 'Activo'
     ]);
     const contenidoCSV = [encabezados.join(","), ...filas.map(f => f.join(","))].join("\n");
     const BOM = '\uFEFF';
@@ -65,7 +69,6 @@ export default function UserManagement() {
     document.body.removeChild(enlace);
   };
 
-  // FILTRADO EN TIEMPO REAL
   const compradoresFiltrados = compradores.filter(usuario => {
     const s = searchTerm.toLowerCase();
     return (
@@ -79,16 +82,12 @@ export default function UserManagement() {
   return (
     <div className="py-6 bg-gray-50 min-h-screen font-sans animate-fade-in">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        
-        {/* ENCABEZADO */}
         <div className="mb-8 border-b border-gray-200 pb-4 flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
           <div>
             <h1 className="text-3xl font-black text-gray-900 tracking-tight">Gestión de Clientes</h1>
             <p className="text-gray-500 font-medium mt-1">Moderación de usuarios de la comunidad AutoRed.</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            
-            {/* BUSCADOR */}
             <div className="relative">
               <input 
                 type="text" 
@@ -110,7 +109,6 @@ export default function UserManagement() {
           </div>
         </div>
 
-        {/* TABLA DE USUARIOS */}
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
@@ -156,7 +154,7 @@ export default function UserManagement() {
                         </td>
                         <td className="py-4 px-6 text-right">
                           <button 
-                            onClick={() => alternarEstadoUsuario(usuario.id)}
+                            onClick={() => alternarEstadoUsuario(usuario.id, usuario.activo)}
                             className={`font-bold px-3 py-1.5 rounded-lg text-xs transition-colors flex items-center gap-1 ml-auto border ${
                               estaSuspendido 
                                 ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' 
@@ -174,7 +172,6 @@ export default function UserManagement() {
             </table>
           </div>
         </div>
-
       </div>
     </div>
   );

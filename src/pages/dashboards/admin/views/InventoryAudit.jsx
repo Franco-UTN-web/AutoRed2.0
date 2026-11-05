@@ -1,33 +1,35 @@
 import React, { useState, useEffect } from 'react';
+import { supabase } from '@/supabase';
 
 export default function InventoryAudit() {
   const [inventario, setInventario] = useState([]);
   const [cargando, setCargando] = useState(true);
   
-  // Filtros y Pestañas
   const [busqueda, setBusqueda] = useState('');
-  const [filtroEstado, setFiltroEstado] = useState('activos'); // 'activos' | 'inactivos'
+  const [filtroEstado, setFiltroEstado] = useState('activos');
   
-  // Modal de Confirmación
   const [modal, setModal] = useState({
     visible: false,
     inventarioId: null,
     piezaId: null,
     nombrePieza: '',
-    accion: '' // 'eliminar' | 'suspender' | 'reactivar'
+    accion: ''
   });
 
   const cargarInventario = async () => {
     setCargando(true);
     try {
-      // Obtenemos TODO el inventario, sin importar el estado
-      const res = await fetch('https://backautored-production.up.railway.app/api/inventario/todos');
-      if (res.ok) {
-        const data = await res.json();
-        setInventario(data);
-      }
+      const { data, error } = await supabase
+        .from('productos')
+        .select(`
+          *,
+          pieza:piezas(*)
+        `);
+
+      if (error) throw error;
+      setInventario(data || []);
     } catch (error) {
-      console.error("Error al cargar auditoría:", error);
+      console.error("Error al cargar auditoría en Supabase:", error);
     } finally {
       setCargando(false);
     }
@@ -37,48 +39,35 @@ export default function InventoryAudit() {
     cargarInventario();
   }, []);
 
-  // Lógica para ejecutar las acciones en el Backend
   const ejecutarAccion = async () => {
     const { inventarioId, piezaId, accion } = modal;
     
     try {
       if (accion === 'eliminar') {
-        // HARD DELETE: Borrado definitivo de base de datos
-        await fetch(`https://backautored-production.up.railway.app/api/inventario/eliminar/${inventarioId}`, {
-          method: 'DELETE'
-        });
+        const { error } = await supabase.from('productos').delete().eq('id', inventarioId);
+        if (error) throw error;
       } else if (accion === 'suspender') {
-        // BAJA LÓGICA: Desactiva la pieza (OJO: Ajusta esta URL según tu backend de Piezas)
-        await fetch(`https://backautored-production.up.railway.app/api/piezas/${piezaId}/suspender`, {
-          method: 'PUT'
-        });
+        const { error } = await supabase.from('piezas').update({ activo: false }).eq('id', piezaId);
+        if (error) throw error;
       } else if (accion === 'reactivar') {
-        // ALTA LÓGICA: Reactiva la pieza
-        await fetch(`https://backautored-production.up.railway.app/api/piezas/${piezaId}/reactivar`, {
-          method: 'PUT'
-        });
+        const { error } = await supabase.from('piezas').update({ activo: true }).eq('id', piezaId);
+        if (error) throw error;
       }
       
-      // Cerramos modal y recargamos los datos para ver los cambios
       setModal({ visible: false, inventarioId: null, piezaId: null, nombrePieza: '', accion: '' });
       cargarInventario();
-      
     } catch (error) {
       console.error("Error ejecutando acción:", error);
-      alert("Hubo un problema al ejecutar la acción.");
+      alert("Hubo un problema al ejecutar la acción: " + error.message);
     }
   };
 
-  // Filtrado doble (por pestaña activa/inactiva y por barra de búsqueda)
   const inventarioFiltrado = inventario.filter(item => {
-    // Asumimos que si no tiene el campo 'activo', es true por defecto
     const esActivo = item.pieza?.activo !== false; 
     
-    // Filtro de Pestaña
     if (filtroEstado === 'activos' && !esActivo) return false;
     if (filtroEstado === 'inactivos' && esActivo) return false;
 
-    // Filtro de Búsqueda
     const term = busqueda.toLowerCase();
     return (
       item.pieza?.nombre_comercial?.toLowerCase().includes(term) ||
@@ -90,8 +79,6 @@ export default function InventoryAudit() {
   return (
     <div className="py-8 bg-gray-50 min-h-screen">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        
-        {/* ENCABEZADO Y BÚSQUEDA */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-8 gap-4">
           <div>
             <h1 className="text-3xl font-black text-gray-900 tracking-tight">Auditoría de Inventario</h1>
@@ -115,7 +102,6 @@ export default function InventoryAudit() {
           </div>
         </div>
 
-        {/* PESTAÑAS (TABS) */}
         <div className="flex gap-4 mb-6 border-b border-gray-200">
           <button 
             onClick={() => setFiltroEstado('activos')}
@@ -131,7 +117,6 @@ export default function InventoryAudit() {
           </button>
         </div>
 
-        {/* TABLA DE AUDITORÍA */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
@@ -151,7 +136,6 @@ export default function InventoryAudit() {
                 ) : (
                   inventarioFiltrado.map(item => (
                     <tr key={item.id} className={`hover:bg-gray-50 transition-colors ${item.pieza?.activo === false ? 'opacity-75 bg-red-50/30' : ''}`}>
-                      
                       <td className="p-4 align-top">
                         <span className="bg-gray-100 text-gray-600 font-mono text-xs px-2 py-1 rounded border border-gray-200">
                           {item.pieza?.numero_parte || 'S/N'}
@@ -181,8 +165,6 @@ export default function InventoryAudit() {
                       
                       <td className="p-4 align-top">
                         <div className="flex flex-col items-center gap-2">
-                          
-                          {/* BOTÓN DE SUSPENDER / REACTIVAR (Baja Lógica) */}
                           {item.pieza?.activo === false ? (
                             <button 
                               onClick={() => setModal({ visible: true, inventarioId: item.id, piezaId: item.pieza.id, nombrePieza: item.pieza.nombre_comercial, accion: 'reactivar' })}
@@ -199,7 +181,6 @@ export default function InventoryAudit() {
                             </button>
                           )}
 
-                          {/* BOTÓN DE ELIMINAR (Hard Delete) */}
                           <button 
                             onClick={() => setModal({ visible: true, inventarioId: item.id, piezaId: item.pieza?.id, nombrePieza: item.pieza?.nombre_comercial, accion: 'eliminar' })}
                             className="w-full bg-white text-red-500 border border-red-200 hover:bg-red-50 hover:border-red-300 text-xs font-bold py-1.5 px-3 rounded flex items-center justify-center gap-1 transition-colors"
@@ -207,10 +188,8 @@ export default function InventoryAudit() {
                             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                             Eliminar
                           </button>
-
                         </div>
                       </td>
-                      
                     </tr>
                   ))
                 )}
@@ -220,11 +199,9 @@ export default function InventoryAudit() {
         </div>
       </div>
 
-      {/* MODAL DE CONFIRMACIÓN */}
       {modal.visible && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black bg-opacity-60 backdrop-blur-sm p-4">
           <div className="bg-white rounded-2xl p-8 max-w-sm w-full shadow-2xl animate-fade-in text-center">
-            
             <div className={`w-16 h-16 rounded-full mx-auto mb-4 flex items-center justify-center ${modal.accion === 'eliminar' ? 'bg-red-100 text-red-600' : modal.accion === 'suspender' ? 'bg-yellow-100 text-yellow-600' : 'bg-green-100 text-green-600'}`}>
               <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
@@ -237,8 +214,6 @@ export default function InventoryAudit() {
             
             <p className="text-gray-500 text-sm mb-6 font-medium">
               Estás a punto de <strong className="uppercase">{modal.accion}</strong> el producto <span className="text-gray-800 font-bold">"{modal.nombrePieza}"</span>.
-              {modal.accion === 'eliminar' && " Esta acción no se puede deshacer y borrará la pieza de la base de datos."}
-              {modal.accion === 'suspender' && " La pieza desaparecerá del catálogo público hasta que la reactives."}
             </p>
             
             <div className="flex gap-3">

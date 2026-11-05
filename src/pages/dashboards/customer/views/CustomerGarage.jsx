@@ -1,22 +1,38 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from '../../../../supabase'; // Ajusta la ruta según tu proyecto
+import { supabase } from '@/supabase';
 import VehicleModal from '../components/VehicleModal';
 
 export default function CustomerGarage({ usuario }) {
   const [vehiculos, setVehiculos] = useState([]);
   const [cargandoVehiculos, setCargandoVehiculos] = useState(true);
   const [modalAbierto, setModalAbierto] = useState(false);
-  
-  // 🔥 NUEVO ESTADO PARA LA ANIMACIÓN 🔥
   const [vehiculoEliminando, setVehiculoEliminando] = useState(null);
 
-  const userId = usuario?.id;
+  // Obtener userId desde la prop o fallback a localStorage si la prop aún no ha cargado
+  const obtenerUserIdActual = () => {
+    if (usuario?.id) return usuario.id;
+    if (usuario?.user_id) return usuario.user_id;
+    const sessionData = JSON.parse(localStorage.getItem('user_data') || '{}');
+    return sessionData.id || sessionData.user_id || null;
+  };
+
+  const userId = obtenerUserIdActual();
 
   const fetchVehiculos = async () => {
-    if (!userId) return;
+    const idActual = userId || obtenerUserIdActual();
+    if (!idActual) {
+      setCargandoVehiculos(false);
+      return;
+    }
+
     setCargandoVehiculos(true);
     try {
-      const { data, error } = await supabase.from('vehiculos_cliente').select('*').eq('usuario_id', userId);
+      // Nota: Si la columna en tu tabla Supabase no es 'usuario_id', cámbiala aquí
+      const { data, error } = await supabase
+        .from('vehiculos_cliente')
+        .select('*')
+        .eq('usuario_id', idActual);
+
       if (error) throw error;
       setVehiculos(data || []);
     } catch (error) {
@@ -30,22 +46,24 @@ export default function CustomerGarage({ usuario }) {
     fetchVehiculos();
   }, [userId]);
 
- const handleEliminarVehiculo = async (id) => {
+  const handleEliminarVehiculo = async (id) => {
     if (!window.confirm("¿Seguro que deseas eliminar este vehículo de tu garaje?")) return;
     
-    // 1. Disparamos la animación visual inmediatamente
     setVehiculoEliminando(id);
 
-    // 2. Mandamos la orden a Supabase en segundo plano sin detener la ejecución
-    supabase.from('vehiculos_cliente').delete().eq('id', id).then(({error}) => {
-      if (error) console.error("Error silencioso en base de datos:", error);
-    });
+    const { error } = await supabase
+      .from('vehiculos_cliente')
+      .delete()
+      .eq('id', id);
 
-    // 3. Retrasamos la eliminación del DOM exactamente los 300ms que dura la animación CSS
-    setTimeout(() => {
-      setVehiculos(prev => prev.filter(v => v.id !== id));
+    if (error) {
+      console.error("Error al eliminar de la base de datos:", error.message);
       setVehiculoEliminando(null);
-    }, 300);
+      return;
+    }
+
+    setVehiculos(prev => prev.filter(v => v.id !== id));
+    setVehiculoEliminando(null);
   };
 
   return (
@@ -75,7 +93,7 @@ export default function CustomerGarage({ usuario }) {
             </div>
           ) : (
             vehiculos.map(carro => (
-             <div 
+              <div 
                 key={carro.id} 
                 className={`bg-gray-50 border border-gray-200 group relative hover:border-autoblue shadow-sm origin-left overflow-hidden transition-all duration-300 ease-out
                   ${vehiculoEliminando === carro.id 

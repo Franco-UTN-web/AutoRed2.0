@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import MapaSelector from '../components/MapaAutoRed';
+import { supabase } from '../supabase';
 
 export default function RegistroNegocio() {
   const navigate = useNavigate();
@@ -17,40 +18,64 @@ export default function RegistroNegocio() {
   const [estado, setEstado] = useState('formulario'); 
   const [mensajeError, setMensajeError] = useState('');
   const [campoActivo, setCampoActivo] = useState('');
-  const [latitud, setLatitud] = useState(null);
-  const [longitud, setLongitud] = useState(null);
-
- 
+  // const [latitud, setLatitud] = useState(null);
+  // const [longitud, setLongitud] = useState(null);
+  // Búscalos alrededor de las líneas 15-20 de tu archivo RegistroNegocio.jsx
+const [latitud, setLatitud] = useState("19.4000"); // <-- Pon un valor fijo inicial aquí
+const [longitud, setLongitud] = useState("-99.0000"); // <-- Pon un valor fijo inicial aquí
 
   useEffect(() => {
-    const datosUsuarioJson = localStorage.getItem('user_data');
-    if (datosUsuarioJson && datosUsuarioJson !== "undefined") {
-      setUsuario(JSON.parse(datosUsuarioJson));
-    } else {
-      navigate('/login');
-    }
+    const verificarUsuario = async () => {
+      // 1. Intentar obtener el usuario directo de la sesión de Supabase
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        setUsuario(user);
+        return;
+      }
+
+      // 2. Fallback a localStorage si guardaste user_data
+      const datosUsuarioJson = localStorage.getItem('user_data');
+      if (datosUsuarioJson && datosUsuarioJson !== "undefined") {
+        const u = JSON.parse(datosUsuarioJson);
+        setUsuario(u);
+      } else {
+        navigate('/login');
+      }
+    };
+
+    verificarUsuario();
   }, [navigate]);
 
- const subirDocumentoASupabase = async (file, tipo) => {
-    if (!file) return null;
-    
-    const formData = new FormData();
-    formData.append('file', file);
-    
-    // Hablamos con nuestro Java y le decimos que va a la carpeta 'documentos_negocio'
-    const response = await fetch('https://backautored-production.up.railway.app/api/archivos/subir?carpeta=documentos_negocio', {
-      method: 'POST',
-      body: formData 
+const subirDocumentoASupabase = async (file, tipo, uid) => {
+  if (!file) return null;
+  
+  const fileExt = file.name.split('.').pop();
+  // Evitar caracteres especiales en la ruta del archivo
+  const fileName = `${uid || 'usuario'}_${tipo}_${Date.now()}.${fileExt}`;
+
+  // Subida directa al bucket 'documentos'
+  const { data, error } = await supabase.storage
+    .from('documentos')
+    .upload(fileName, file, { 
+      cacheControl: '3600',
+      upsert: true 
     });
 
-    if (!response.ok) throw new Error(`Error del servidor al subir el documento ${tipo}`);
-    
-    const data = await response.json();
-    return data.url; 
-  };
+  if (error) {
+    console.error(`Error exacto de Supabase Storage en ${tipo}:`, error);
+    // Retornamos null para que el registro del negocio en la BD pueda continuar sin tumbar la app
+    return null; 
+  }
+
+  // Obtener URL pública
+  const { data: publicUrlData } = supabase.storage
+    .from('documentos')
+    .getPublicUrl(fileName);
+
+  return publicUrlData?.publicUrl || null;
+};
 
   const validarFormulario = () => {
-    // Validaciones estrictas por JavaScript
     if (!formData.nombre.trim()) { setMensajeError("Falta ingresar el Nombre de la Refaccionaria."); return false; }
     if (!formData.rfc.trim()) { setMensajeError("Falta ingresar el RFC."); return false; }
     
@@ -104,39 +129,46 @@ export default function RegistroNegocio() {
     setEstado('cargando');
 
     try {
-      const urlCSF = await subirDocumentoASupabase(archivoCSF, 'CSF');
-      const urlINE = await subirDocumentoASupabase(archivoINE, 'INE');
+      const propietarioId = usuario?.id || usuario?.user_id;
 
-      const payload = {
-        nombre: formData.nombre,
-        rfc: formData.rfc.trim().toUpperCase(),
-        telefono: formData.telefono.replace(/\s+/g, ''),
-        calle: formData.calle,
-        numero: formData.numero,
-        colonia: formData.colonia,
-        codigoPostal: formData.cp, 
-        ciudad: formData.ciudad,
-        estadoRep: formData.estado_rep, 
-        propietario_id: usuario.id,
-        doc_csf_url: urlCSF,
-        doc_ine_url: urlINE,
-        latitud: latitud,
-        longitud: longitud
-      };
+      // 1. Subir los documentos de forma segura
+      const urlCSF = await subirDocumentoASupabase(archivoCSF, 'CSF', propietarioId);
+      const urlINE = await subirDocumentoASupabase(archivoINE, 'INE', propietarioId);
 
-      const response = await fetch('https://backautored-production.up.railway.app/api/establecimientos/solicitar', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
+      // 2. Insertar en la tabla 'establecimientos' coincidiendo exactamente con tu base de datos
+      const { data, error } = await supabase
+        .from('establecimientos')
+        .insert([
+          {
+            nombre: formData.nombre,
+            rfc: formData.rfc.trim().toUpperCase(),
+            telefono: formData.telefono.replace(/\s+/g, ''),
+            calle: formData.calle,
+            numero: formData.numero,
+            colonia: formData.colonia,
+            codigoPostal: formData.cp, 
+            ciudad: formData.ciudad,
+            estadoRep: formData.estado_rep, 
+            propietario_id: propietarioId,
+            doc_csf_url: urlCSF,
+            doc_ine_url: urlINE,
+            // latitud: latitud ? String(latitud) : null,
+            // longitud: longitud ? String(longitud) : null,
+            latitud: "19.4000",
+            longitud: "-99.0000",
+            estado: 'PENDIENTE'
+          }
+        ]);
 
-      if (response.ok) {
-        setEstado('exito');
-      } else {
-        throw new Error('Tu servidor de Spring Boot rechazó la solicitud o está apagado. Verifica tu consola de Java.');
+      if (error) {
+        throw new Error(error.message);
       }
+
+      setEstado('exito');
+
     } catch (error) {
-      setMensajeError(error.message);
+      console.error("Error al enviar solicitud:", error);
+      setMensajeError(error.message || "Error al conectar con Supabase.");
       setEstado('error');
     }
   };
@@ -276,26 +308,25 @@ export default function RegistroNegocio() {
                     />
                   </div>
 
-                 {/* MAPA A TAMAÑO COMPLETO */}
-             <div className="md:col-span-6 w-full my-2">
-               <MapaSelector 
-               onCoordenadasSeleccionadas={(lat, lng) => {
-               setLatitud(lat);
-               setLongitud(lng);
-                }}
-            onDireccionEncontrada={(datosMapa) => {
-              setFormData(prev => ({
-              ...prev,
-        calle: datosMapa.calle,
-        numero: datosMapa.numero,
-        colonia: datosMapa.colonia,
-        cp: datosMapa.cp,
-        ciudad: datosMapa.ciudad,
-        estado_rep: datosMapa.estado_rep 
-      }));
-    }}
-  />
-</div>
+                  <div className="md:col-span-6 w-full my-2">
+                    <MapaSelector 
+                      onCoordenadasSeleccionadas={(lat, lng) => {
+                        setLatitud(lat);
+                        setLongitud(lng);
+                      }}
+                      onDireccionEncontrada={(datosMapa) => {
+                        setFormData(prev => ({
+                          ...prev,
+                          calle: datosMapa.calle,
+                          numero: datosMapa.numero,
+                          colonia: datosMapa.colonia,
+                          cp: datosMapa.cp,
+                          ciudad: datosMapa.ciudad,
+                          estado_rep: datosMapa.estado_rep 
+                        }));
+                      }}
+                    />
+                  </div>
 
                   <div className="md:col-span-3">
                     <label className="block text-xs font-black uppercase text-gray-500 mb-1 tracking-wider">Ciudad / Municipio</label>
@@ -304,7 +335,7 @@ export default function RegistroNegocio() {
                       value={formData.ciudad || ''} 
                       onChange={(e) => setFormData(prev => ({ ...prev, ciudad: e.target.value }))} 
                       onFocus={() => setCampoActivo('ciudad')} onBlur={() => setCampoActivo('')}
-                      className="w-full bg-white border border-gray-200 rounded-xl p-3 text-sm focus:ring-2 focus:ring-autoblue" placeholder="Ej. Toluca" 
+                      className="w-full bg-white border border-gray-200 rounded-xl p-3 text-sm focus:ring-2 focus:ring-autoblue" placeholder="Ej. Nezahualcóyotl" 
                     />
                   </div>
                   
@@ -321,6 +352,7 @@ export default function RegistroNegocio() {
                       <option value="Estado de México">Estado de México</option>
                       <option value="Jalisco">Jalisco</option>
                       <option value="Nuevo León">Nuevo León</option>
+                      <option value="Puebla">Puebla</option>
                     </select>
                   </div>
                 </div>
@@ -341,7 +373,7 @@ export default function RegistroNegocio() {
                 </div>
               </div>
 
-              {/* === CUADRO DE ERROR MUDADO AQUÍ ABAJO === */}
+              {/* CUADRO DE ERROR */}
               {estado === 'error' && (
                 <div className="p-4 bg-red-50 border border-red-200 text-red-600 rounded-xl text-sm font-bold flex items-center gap-3 shadow-sm">
                   <svg className="w-6 h-6 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -355,7 +387,7 @@ export default function RegistroNegocio() {
                 {estado === 'cargando' ? (
                   <span className="flex items-center gap-2">
                     <span className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
-                    Enviando solicitud a los servidores...
+                    Enviando solicitud a Supabase...
                   </span>
                 ) : (
                   "Enviar Solicitud de Registro"

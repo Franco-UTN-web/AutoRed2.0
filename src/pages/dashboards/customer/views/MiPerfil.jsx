@@ -1,20 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from '../../../../supabase'; 
+import { supabase } from '@/supabase';
 
 export default function MiPerfil() {
   const [userId, setUserId] = useState(null);
   
-  // Estados para datos de Negocio
   const [nombre, setNombre] = useState('');
   const [apellido, setApellido] = useState('');
   const [telefono, setTelefono] = useState('');
   const [fechaNacimiento, setFechaNacimiento] = useState('');
   
-  // Estados para datos de Acceso
   const [correoActual, setCorreoActual] = useState('');
   const [correo, setCorreo] = useState('');
-  const [passwordActual, setPasswordActual] = useState(''); // NUEVO: Contraseña actual
-  const [nuevaPassword, setNuevaPassword] = useState(''); // NUEVO: Nueva contraseña
+  const [passwordActual, setPasswordActual] = useState('');
+  const [nuevaPassword, setNuevaPassword] = useState('');
   
   const [cargando, setCargando] = useState(true);
   const [guardando, setGuardando] = useState(false);
@@ -26,29 +24,42 @@ export default function MiPerfil() {
 
   const obtenerDatosUsuario = async () => {
     try {
-      const { data: { user }, error } = await supabase.auth.getUser();
-      if (error) throw error;
+      let currentId = null;
+      let currentEmail = '';
+
+      // 1. Intentar obtener desde la sesión Auth de Supabase
+      const { data: { user } } = await supabase.auth.getUser();
       
       if (user) {
-        setUserId(user.id);
-        setCorreoActual(user.email);
-        setCorreo(user.email);
-        
-        const { data: perfil } = await supabase
+        currentId = user.id;
+        currentEmail = user.email;
+      } else {
+        // 2. Fallback a localStorage si el login fue por almacenamiento local
+        const sessionData = JSON.parse(localStorage.getItem('user_data') || '{}');
+        currentId = sessionData.id || sessionData.user_id || null;
+        currentEmail = sessionData.email || sessionData.correo || '';
+      }
+
+      if (currentId) {
+        setUserId(currentId);
+        setCorreoActual(currentEmail);
+        setCorreo(currentEmail);
+
+        const { data: perfil, error: perfilErr } = await supabase
           .from('perfiles')
           .select('nombre, apellido, telefono, fecha_nacimiento')
-          .eq('id', user.id)
-          .single();
+          .eq('id', currentId)
+          .maybeSingle();
           
         if (perfil) {
           setNombre(perfil.nombre || '');
           setApellido(perfil.apellido || '');
           setTelefono(perfil.telefono || '');
-          setFechaNacimiento(perfil.fecha_nacimiento || ''); // Si es null, lo pone como '' para el input
+          setFechaNacimiento(perfil.fecha_nacimiento || '');
         }
       }
     } catch (error) {
-      console.error("Error:", error);
+      console.error("Error al obtener datos del usuario:", error);
     } finally {
       setCargando(false);
     }
@@ -60,7 +71,18 @@ export default function MiPerfil() {
     setMensaje({ tipo: '', texto: '' });
 
     try {
-      // --- LÓGICA DE CONTRASEÑA ---
+      // Determinar ID activo al momento de guardar
+      let activeUserId = userId;
+      if (!activeUserId) {
+        const sessionData = JSON.parse(localStorage.getItem('user_data') || '{}');
+        activeUserId = sessionData.id || sessionData.user_id;
+      }
+
+      if (!activeUserId) {
+        throw new Error("No se pudo verificar tu sesión. Por favor inicia sesión nuevamente.");
+      }
+
+      // Actualizar credenciales de Supabase Auth sólo si se especificó una nueva contraseña
       if (nuevaPassword.trim() !== '') {
         if (passwordActual.trim() === '') {
           throw new Error("Debes ingresar tu contraseña actual para poder cambiarla.");
@@ -69,7 +91,6 @@ export default function MiPerfil() {
           throw new Error("La nueva contraseña no puede ser igual a la actual.");
         }
 
-        // 1. Verificamos que la contraseña actual sea correcta haciendo un mini-login
         const { error: signInError } = await supabase.auth.signInWithPassword({
           email: correoActual,
           password: passwordActual
@@ -77,7 +98,6 @@ export default function MiPerfil() {
 
         if (signInError) throw new Error("La contraseña actual es incorrecta.");
 
-        // 2. Si es correcta, aplicamos la nueva
         const { error: updateError } = await supabase.auth.updateUser({
           password: nuevaPassword
         });
@@ -85,36 +105,33 @@ export default function MiPerfil() {
         if (updateError) throw new Error("Error al actualizar la contraseña: " + updateError.message);
       }
 
-      // --- LÓGICA DE CORREO ---
-      if (correo !== correoActual) {
+      // Actualizar email si cambió
+      if (correo && correo !== correoActual) {
         const { error: emailError } = await supabase.auth.updateUser({ email: correo });
         if (emailError) throw new Error("Error al actualizar correo: " + emailError.message);
       }
 
-      // --- LÓGICA DE BACKEND (SPRING BOOT) ---
-      const response = await fetch(`https://backautored-production.up.railway.app/api/perfiles/actualizar/${userId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      // Upsert directo en la tabla 'perfiles' de Supabase
+      const { error: perfilError } = await supabase
+        .from('perfiles')
+        .upsert({
+          id: activeUserId,
           nombre: nombre,
           apellido: apellido,
           telefono: telefono,
-          // SOLUCIÓN AL ERROR 500: Si está vacío, enviamos null, no una cadena vacía ""
           fecha_nacimiento: fechaNacimiento === '' ? null : fechaNacimiento
-        })
-      });
+        });
 
-      if (!response.ok) throw new Error("Error al guardar en el servidor. Revisa los datos.");
+      if (perfilError) throw new Error("Error al guardar perfil: " + perfilError.message);
 
-      // Si todo sale bien:
       setMensaje({ tipo: 'exito', texto: '¡Tus datos se actualizaron correctamente!' });
       setPasswordActual(''); 
       setNuevaPassword(''); 
       setCorreoActual(correo);
 
     } catch (error) {
-      console.error("Error en la petición:", error);
-      setMensaje({ tipo: 'error', texto: error.message });
+      console.error("Error en la actualización:", error);
+      setMensaje({ tipo: 'error', texto: error.message || "No se pudieron guardar los cambios." });
     } finally {
       setGuardando(false);
       setTimeout(() => setMensaje({ tipo: '', texto: '' }), 5000);
@@ -126,7 +143,6 @@ export default function MiPerfil() {
   return (
     <div className="py-8 bg-gray-50 min-h-screen font-sans animate-fade-in">
       <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
-        
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
           <div className="p-6 sm:p-8 border-b border-gray-100">
             <h2 className="text-2xl font-black text-gray-900">Configuración de Cuenta</h2>
@@ -134,8 +150,6 @@ export default function MiPerfil() {
           </div>
 
           <form onSubmit={handleSubmit} className="p-6 sm:p-8 space-y-8">
-            
-            {/* SECCIÓN DATOS PERSONALES */}
             <div>
               <h3 className="text-lg font-bold text-autoblue border-b border-gray-100 pb-2 mb-4">Datos Personales</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -158,7 +172,6 @@ export default function MiPerfil() {
               </div>
             </div>
 
-            {/* SECCIÓN SEGURIDAD DE LA CUENTA */}
             <div>
               <h3 className="text-lg font-bold text-autoblue border-b border-gray-100 pb-2 mb-4">Seguridad de la Cuenta</h3>
               
@@ -202,7 +215,6 @@ export default function MiPerfil() {
                 {guardando ? 'Guardando...' : 'Guardar Cambios'}
               </button>
             </div>
-
           </form>
         </div>
       </div>

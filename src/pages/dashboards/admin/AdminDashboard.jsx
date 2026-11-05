@@ -1,15 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import StoreManagement from './views/StoreManagement';
-import { LayoutDashboard, Store, LogOut } from 'lucide-react';
+import { LayoutDashboard, Store } from 'lucide-react';
 import AnalyticsView from './views/AnalyticsView';
 import InventoryAudit from './views/InventoryAudit';
 import UserManagement from './views/UserManagement';
 import ApiUsagePanel from './ApiUsagePanel';
+import { supabase } from '@/supabase';
 
 export default function AdminDashboard() {
   const [vistaActiva, setVistaActiva] = useState('tiendas');
   
-  // Listas de tiendas según su estado
   const [solicitudes, setSolicitudes] = useState([]);
   const [tiendasActivas, setTiendasActivas] = useState([]); 
   const [tiendasSuspendidas, setTiendasSuspendidas] = useState([]);
@@ -22,32 +22,35 @@ export default function AdminDashboard() {
   const [modalConfirm, setModalConfirm] = useState({ visible: false, id: null, accion: '', nombreTienda: '' });
   const [verDirectorio, setVerDirectorio] = useState(false);
 
+  const fetchAdminData = async () => {
+    setCargando(true);
+    try {
+      const { data, error } = await supabase
+        .from('establecimientos')
+        .select('*');
+
+      if (error) throw error;
+
+      const pendientes = data.filter(tienda => tienda.estado === 'PENDIENTE');
+      const aprobadas = data.filter(tienda => tienda.estado === 'APROBADO');
+      const suspendidas = data.filter(tienda => tienda.estado === 'SUSPENDIDO');
+      
+      setSolicitudes(pendientes);
+      setTiendasActivas(aprobadas);
+      setTiendasSuspendidas(suspendidas);
+      
+      setMetricas({
+        tiendasAprobadas: aprobadas.length,
+        tiendasPendientes: pendientes.length
+      });
+    } catch (error) {
+      console.error("Error cargando establecimientos desde Supabase:", error.message);
+    } finally {
+      setCargando(false);
+    }
+  };
+
   useEffect(() => {
-    const fetchAdminData = async () => {
-      try {
-        const response = await fetch('https://backautored-production.up.railway.app/api/establecimientos/todos');
-        if (response.ok) {
-          const data = await response.json();
-          
-          const pendientes = data.filter(tienda => tienda.estado === 'PENDIENTE');
-          const aprobadas = data.filter(tienda => tienda.estado === 'APROBADO');
-          const suspendidas = data.filter(tienda => tienda.estado === 'SUSPENDIDO');
-          
-          setSolicitudes(pendientes);
-          setTiendasActivas(aprobadas);
-          setTiendasSuspendidas(suspendidas);
-          
-          setMetricas({
-            tiendasAprobadas: aprobadas.length,
-            tiendasPendientes: pendientes.length
-          });
-        }
-      } catch (error) {
-        console.error("Error conectando con Spring Boot:", error);
-      } finally {
-        setCargando(false);
-      }
-    };
     fetchAdminData();
   }, []);
 
@@ -62,57 +65,59 @@ export default function AdminDashboard() {
     setProcesandoId(id);
     setTipoAccion(accion);
 
+    let nuevoEstado = 'PENDIENTE';
+    if (accion === 'aprobar' || accion === 'reactivar') nuevoEstado = 'APROBADO';
+    else if (accion === 'suspender') nuevoEstado = 'SUSPENDIDO';
+    else if (accion === 'rechazar') nuevoEstado = 'RECHAZADO';
+
     try {
-      // Tu lógica dinámica es perfecta aquí
-      const response = await fetch(`https://backautored-production.up.railway.app/api/establecimientos/${accion}/${id}`, { method: 'PUT' });
-      if (response.ok) {
-        const tiendaProcesada = [...solicitudes, ...tiendasActivas, ...tiendasSuspendidas].find(t => t.id === id);
-        
-        setTimeout(() => {
-          if (accion === 'aprobar' || accion === 'reactivar') {
-            setSolicitudes(prev => prev.filter(sol => sol.id !== id));
-            setTiendasSuspendidas(prev => prev.filter(t => t.id !== id));
-            setTiendasActivas(prev => [...prev, { ...tiendaProcesada, estado: 'APROBADO' }]);
-            
-            if (accion === 'aprobar') {
-              setMetricas(prev => ({ tiendasAprobadas: prev.tiendasAprobadas + 1, tiendasPendientes: prev.tiendasPendientes - 1 }));
-            } else {
-              setMetricas(prev => ({ ...prev, tiendasAprobadas: prev.tiendasAprobadas + 1 }));
-            }
-          } 
-          else if (accion === 'rechazar') {
-            setSolicitudes(prev => prev.filter(sol => sol.id !== id));
-            setMetricas(prev => ({ ...prev, tiendasPendientes: prev.tiendasPendientes - 1 }));
-          } 
-          else if (accion === 'suspender') {
-            setTiendasActivas(prev => prev.filter(t => t.id !== id));
-            setTiendasSuspendidas(prev => [...prev, { ...tiendaProcesada, estado: 'SUSPENDIDO' }]);
-            setMetricas(prev => ({ ...prev, tiendasAprobadas: prev.tiendasAprobadas - 1 }));
-          }
+      const { error } = await supabase
+        .from('establecimientos')
+        .update({ estado: nuevoEstado })
+        .eq('id', id);
+
+      if (error) throw error;
+
+      const tiendaProcesada = [...solicitudes, ...tiendasActivas, ...tiendasSuspendidas].find(t => t.id === id);
+      
+      setTimeout(() => {
+        if (accion === 'aprobar' || accion === 'reactivar') {
+          setSolicitudes(prev => prev.filter(sol => sol.id !== id));
+          setTiendasSuspendidas(prev => prev.filter(t => t.id !== id));
+          setTiendasActivas(prev => [...prev, { ...tiendaProcesada, estado: 'APROBADO' }]);
           
-          setProcesandoId(null);
-          setTipoAccion(null);
-        }, 500);
-      } else {
+          if (accion === 'aprobar') {
+            setMetricas(prev => ({ tiendasAprobadas: prev.tiendasAprobadas + 1, tiendasPendientes: prev.tiendasPendientes - 1 }));
+          } else {
+            setMetricas(prev => ({ ...prev, tiendasAprobadas: prev.tiendasAprobadas + 1 }));
+          }
+        } 
+        else if (accion === 'rechazar') {
+          setSolicitudes(prev => prev.filter(sol => sol.id !== id));
+          setMetricas(prev => ({ ...prev, tiendasPendientes: prev.tiendasPendientes - 1 }));
+        } 
+        else if (accion === 'suspender') {
+          setTiendasActivas(prev => prev.filter(t => t.id !== id));
+          setTiendasSuspendidas(prev => [...prev, { ...tiendaProcesada, estado: 'SUSPENDIDO' }]);
+          setMetricas(prev => ({ ...prev, tiendasAprobadas: prev.tiendasAprobadas - 1 }));
+        }
+        
         setProcesandoId(null);
-        alert(`Hubo un error en el servidor al ${accion} el negocio.`);
-      }
+        setTipoAccion(null);
+      }, 500);
     } catch (error) {
       setProcesandoId(null);
-      console.error("Error en la petición:", error);
+      setTipoAccion(null);
+      alert(`Error al actualizar estado en Supabase: ${error.message}`);
     }
   };
 
   if (cargando) return <div className="flex h-screen items-center justify-center font-medium text-gray-500">Cargando panel...</div>;
 
-return (
+  return (
     <div className="flex flex-col md:flex-row h-screen bg-gray-50 text-gray-800 font-sans overflow-hidden">
-      
-      {/* Sidebar Profesional (Convertido a Topbar en móvil) */}
       <aside className="w-full md:w-64 bg-white border-b md:border-r border-gray-200 flex flex-col flex-shrink-0 z-10 p-4">
         <div className="space-y-2 md:space-y-6">
-          
-          {/* Encabezado */}
           <div className="flex items-center justify-between md:justify-start gap-2 px-2 py-2 md:py-3 border-b border-gray-100">
             <div>
               <span className="font-extrabold text-xl tracking-tight text-red-600">Auto<span className="text-gray-900">Red</span></span>
@@ -120,7 +125,6 @@ return (
             </div>
           </div>
           
-          {/* Navegación (Horizontal con scroll en móvil, Vertical en PC) */}
           <nav className="flex md:flex-col gap-2 overflow-x-auto pb-2 md:pb-0 scrollbar-hide">
             <button
               onClick={() => setVistaActiva('tiendas')}
@@ -170,7 +174,6 @@ return (
         </div>
       </aside>
 
-      {/* Área Principal */}
       <main className="flex-1 overflow-y-auto bg-gray-50 relative p-0 md:p-4">
         {vistaActiva === 'tiendas' && (
           <StoreManagement 
@@ -187,20 +190,13 @@ return (
             tipoAccion={tipoAccion}
             verDirectorio={verDirectorio}
             setVerDirectorio={setVerDirectorio}
+            onSuccessUpdate={fetchAdminData}
           />
         )}
-        {vistaActiva === 'analiticas' && (
-          <AnalyticsView />
-        )}
-        {vistaActiva === 'auditoria' && (
-          <InventoryAudit />
-        )}
-        {vistaActiva === 'usuarios' && (
-          <UserManagement />
-        )}
-        {vistaActiva === 'ia' && (
-          <ApiUsagePanel />
-        )}
+        {vistaActiva === 'analiticas' && <AnalyticsView />}
+        {vistaActiva === 'auditoria' && <InventoryAudit />}
+        {vistaActiva === 'usuarios' && <UserManagement />}
+        {vistaActiva === 'ia' && <ApiUsagePanel />}
       </main>
     </div>
   );

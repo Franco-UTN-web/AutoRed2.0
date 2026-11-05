@@ -4,6 +4,7 @@ import { Car, ShoppingBag, LogOut, Settings, Wrench } from 'lucide-react';
 import CustomerGarage from './views/CustomerGarage';
 import CustomerOrders from './views/CustomerOrders';
 import MiPerfil from './views/MiPerfil';
+import { supabase } from '@/supabase';
 
 export default function CustomerDashboard() {
   const [vistaActiva, setVistaActiva] = useState('garaje');
@@ -33,14 +34,9 @@ export default function CustomerDashboard() {
   if (cargando) return <div className="flex h-screen items-center justify-center font-medium text-gray-500">Cargando tu perfil...</div>;
 
   return (
-    // 1. Cambiamos a flex-col en móvil y flex-row en escritorio (md)
     <div className="flex flex-col md:flex-row h-screen bg-gray-50 text-gray-800 font-sans overflow-hidden">
-      
-      {/* SIDEBAR DEL CLIENTE (Convertido a Topbar en móvil) */}
       <aside className="w-full md:w-64 bg-white border-b md:border-r border-gray-200 flex flex-col flex-shrink-0 z-10">
         <div className="p-4 md:p-6">
-          
-          {/* Fila superior en móvil: Logo + Usuario */}
           <div className="flex justify-between items-center md:block mb-4 md:mb-8">
             <Link to="/inicio" className="flex items-center gap-2">
               <span className="font-extrabold text-xl md:text-2xl tracking-tight text-autoblue">
@@ -54,7 +50,6 @@ export default function CustomerDashboard() {
             </div>
           </div>
 
-          {/* 2. Menú de navegación: Scroll horizontal en móvil, vertical en escritorio */}
           <nav className="flex md:flex-col gap-2 overflow-x-auto pb-2 md:pb-0 scrollbar-hide">
             <button
               onClick={() => setVistaActiva('garaje')}
@@ -90,7 +85,6 @@ export default function CustomerDashboard() {
               <Wrench size={18} /> Ir al Catálogo
             </Link>
 
-            {/* Botón de cerrar sesión incrustado en el menú deslizante para móviles */}
             <button
               onClick={handleLogout}
               className="md:hidden flex-shrink-0 flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold text-red-500 hover:bg-red-50 transition-all"
@@ -100,7 +94,6 @@ export default function CustomerDashboard() {
           </nav>
         </div>
 
-        {/* Botón de cerrar sesión fijo al fondo (solo en escritorio) */}
         <div className="hidden md:block p-6 border-t border-gray-100 mt-auto">
           <button
             onClick={handleLogout}
@@ -111,7 +104,6 @@ export default function CustomerDashboard() {
         </div>
       </aside>
 
-      {/* ÁREA PRINCIPAL */}
       <main className="flex-1 overflow-y-auto bg-gray-50 relative p-4 md:p-8">
         {vistaActiva === 'garaje' && <CustomerGarage usuario={usuario} />}
         {vistaActiva === 'pedidos' && <CustomerOrders usuario={usuario} />}

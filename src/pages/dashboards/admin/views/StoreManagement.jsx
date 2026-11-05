@@ -1,22 +1,20 @@
 import React, { useState } from 'react'; 
 import MapaAutoRed from "../../../../components/MapaAutoRed";
+import { supabase } from '@/supabase';
 
 export default function StoreManagement({
   solicitudes, tiendasActivas, tiendasSuspendidas, metricas, cargando,
   confirmarAccion, ejecutarAccion, modalConfirm, setModalConfirm,
-  procesandoId, tipoAccion, verDirectorio, setVerDirectorio
+  procesandoId, tipoAccion, verDirectorio, setVerDirectorio, onSuccessUpdate
 }) {
   
-  // ESTADOS PARA BUSCADORES
   const [searchTermSolicitudes, setSearchTermSolicitudes] = useState('');
   const [searchTermDirectorio, setSearchTermDirectorio] = useState('');
   const [modalEditar, setModalEditar] = useState({ visible: false, tienda: null });
   const [guardandoEdicion, setGuardandoEdicion] = useState(false);
 
-  // Unimos activas y suspendidas para mostrarlas en el directorio
   const directorioCompleto = [...tiendasActivas, ...tiendasSuspendidas];
 
-  // FILTROS
   const solicitudesFiltradas = solicitudes.filter(sol => {
     const term = searchTermSolicitudes.toLowerCase();
     return (
@@ -33,7 +31,7 @@ export default function StoreManagement({
     );
   });
 
- const exportarCSV = () => {
+  const exportarCSV = () => {
     const cabeceras = ["ID,Nombre,RFC,Telefono,Estado,Calle,Numero,Colonia,CP,Ciudad,Estado_Rep,Propietario_ID"];
     
     const filas = directorioCompleto.map(tienda => {
@@ -67,26 +65,26 @@ export default function StoreManagement({
     document.body.removeChild(link);
   };
 
-  // 🔥 FUNCIÓN PARA GUARDAR LA EDICIÓN 🔥
   const guardarEdicionTienda = async (e) => {
     e.preventDefault();
     setGuardandoEdicion(true);
 
     try {
-      const response = await fetch(`https://backautored-production.up.railway.app/api/admin/tiendas/${modalEditar.tienda.id}/actualizar`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(modalEditar.tienda)
-      });
+      const { id, created_at, ...datosAActualizar } = modalEditar.tienda;
 
-      if (response.ok) {
-        // Obligamos al navegador a recargar la vista para traer los datos nuevos de la BD
-        window.location.reload(); 
-      } else {
-        alert("Error al actualizar la tienda. Revisa los datos.");
-      }
+      const { error } = await supabase
+        .from('establecimientos')
+        .update(datosAActualizar)
+        .eq('id', id);
+
+      if (error) throw error;
+
+      setModalEditar({ visible: false, tienda: null });
+      if (onSuccessUpdate) onSuccessUpdate();
+      else window.location.reload();
     } catch (error) {
-      console.error("Error al guardar la edición:", error);
+      console.error("Error al guardar la edición en Supabase:", error);
+      alert("Error al actualizar la tienda: " + error.message);
     } finally {
       setGuardandoEdicion(false);
     }
@@ -103,8 +101,6 @@ export default function StoreManagement({
   return (
     <div className="py-10 bg-gray-50 min-h-screen font-sans">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        
-        {/* ENCABEZADO */}
         <div className="flex justify-between items-end mb-8 border-b border-gray-200 pb-4">
           <div>
             <h1 className="text-3xl font-black text-gray-900 tracking-tight">Panel de Control Global</h1>
@@ -120,7 +116,6 @@ export default function StoreManagement({
           </button>
         </div>
 
-        {/* KPIs */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
           <div 
             onClick={() => setVerDirectorio(true)}
@@ -152,9 +147,7 @@ export default function StoreManagement({
           </div>
         </div>
 
-        {/* SECCIÓN DE AUDITORÍA */}
         <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-          
           <div className="flex flex-col sm:flex-row justify-between items-center mb-6 border-b pb-4 gap-4">
             <h3 className="font-bold text-lg text-gray-900 flex items-center gap-2">
                Solicitudes de Registro Pendientes
@@ -179,7 +172,6 @@ export default function StoreManagement({
             ) : (
               solicitudesFiltradas.map(sol => (
                 <div key={sol.id} className={`border border-gray-200 rounded-2xl p-6 transition-all duration-500 flex flex-col lg:flex-row justify-between gap-6 ${procesandoId === sol.id ? (tipoAccion === 'aprobar' ? 'bg-green-50 opacity-0 translate-x-full scale-95' : 'bg-red-50 opacity-0 -translate-x-full scale-95') : 'bg-gray-50 hover:bg-white hover:shadow-md opacity-100'}`}>
-                  {/* Bloque Izquierdo */}
                   <div className="flex-1 space-y-3">
                     <div className="flex flex-col sm:flex-row sm:items-center gap-2">
                       <h4 className="font-black text-gray-900 text-xl">{sol.nombre}</h4>
@@ -188,7 +180,6 @@ export default function StoreManagement({
                     <p className="text-sm text-gray-600 font-medium">📞 {sol.telefono || 'No registrado'} | 📍 {sol.calle && sol.numero ? `${sol.calle} #${sol.numero}, ${sol.estadoRep}` : 'Dirección no disponible'}</p>
                   </div>
 
-                  {/* Bloque Central Documentos */}
                   <div className="flex flex-col sm:flex-row lg:flex-col justify-center gap-3 bg-white p-4 rounded-xl border border-gray-200 lg:w-64">
                     <a href={sol.doc_csf_url} target="_blank" rel="noopener noreferrer" className={`text-xs font-bold py-2 px-3 rounded-lg border text-center ${sol.doc_csf_url ? 'bg-blue-50 text-blue-700' : 'bg-gray-100 text-gray-400 pointer-events-none'}`}>
                       {sol.doc_csf_url ? 'Ver Constancia SAT' : 'Sin Constancia'}
@@ -198,7 +189,6 @@ export default function StoreManagement({
                     </a>
                   </div>
 
-                  {/* Bloque Derecho Acciones */}
                   <div className="flex lg:flex-col items-center justify-center gap-2 lg:pl-4 lg:border-l border-gray-200">
                     <button onClick={() => confirmarAccion(sol.id, sol.nombre, 'aprobar')} disabled={procesandoId === sol.id} className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-xl text-sm transition-colors disabled:opacity-50">
                       Aprobar
@@ -213,7 +203,6 @@ export default function StoreManagement({
           </div>
         </div>
 
-        {/* MODAL DEL DIRECTORIO DE TIENDAS */}
         {verDirectorio && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black bg-opacity-60 backdrop-blur-sm p-4">
             <div className="bg-white rounded-2xl w-full max-w-4xl max-h-[85vh] flex flex-col shadow-2xl animate-fade-in">
@@ -258,9 +247,7 @@ export default function StoreManagement({
                         </div>
                       </div>
                       
-                      
-                      {/* BOTONES DE SUSPENSIÓN / REACTIVACIÓN */}
-                      <div className="w-full sm:w-auto">
+                      <div className="w-full sm:w-auto flex gap-2">
                         {tienda.estado === 'APROBADO' ? (
                           <button 
                             onClick={() => confirmarAccion(tienda.id, tienda.nombre, 'suspender')}
@@ -268,7 +255,6 @@ export default function StoreManagement({
                           >
                             Suspender Tienda
                           </button>
-                          
                         ) : (
                           <button 
                             onClick={() => confirmarAccion(tienda.id, tienda.nombre, 'reactivar')}
@@ -276,7 +262,6 @@ export default function StoreManagement({
                           >
                             Reactivar Acceso
                           </button>
-                          
                         )}
                         <button 
                           onClick={() => setModalEditar({ visible: true, tienda: tienda })}
@@ -293,7 +278,6 @@ export default function StoreManagement({
           </div>
         )}
 
-        {/* MODAL DE CONFIRMACIÓN */}
         {modalConfirm.visible && (
           <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black bg-opacity-60 backdrop-blur-sm">
             <div className="bg-white rounded-2xl p-8 max-w-sm w-full mx-4 shadow-2xl">
@@ -316,92 +300,77 @@ export default function StoreManagement({
         )}
 
       </div>
-      {/* 🔥 MODAL DE EDICIÓN DE TIENDA 🔥 */}
-        {modalEditar.visible && modalEditar.tienda && (
-          <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black bg-opacity-60 backdrop-blur-sm p-4">
-            <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl animate-fade-in">
-              <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50 rounded-t-2xl">
-                <h3 className="text-xl font-black text-gray-900">Editar Datos de Tienda</h3>
-                <button onClick={() => setModalEditar({ visible: false, tienda: null })} className="text-gray-400 hover:text-red-500 font-bold">X</button>
-              </div>
-              
-              <div className="p-6 overflow-y-auto">
-                <form id="form-editar-tienda" onSubmit={guardarEdicionTienda} className="space-y-4">
-                  
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs font-bold text-gray-700 mb-1">Nombre Comercial</label>
-                      <input type="text" name="nombre" value={modalEditar.tienda.nombre || ''} onChange={handleEditChange} className="w-full px-3 py-2 border rounded-lg text-sm" required />
-                    </div>
-                 <div>
-                      <label className="block text-xs font-bold text-gray-700 mb-1">RFC (Intocable)</label>
-                      <input 
-                        type="text" 
-                        name="rfc" 
-                        value={modalEditar.tienda.rfc || ''} 
-                        disabled 
-                        className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-100 text-gray-500 font-mono cursor-not-allowed" 
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-gray-700 mb-1">Teléfono (10 dígitos)</label>
-                      <input 
-                        type="tel" 
-                        name="telefono" 
-                        maxLength={10}
-                        value={modalEditar.tienda.telefono || ''} 
-                        onChange={(e) => {
-                          // Solo permite números
-                          const soloNumeros = e.target.value.replace(/\D/g, '');
-                          handleEditChange({ target: { name: 'telefono', value: soloNumeros } });
-                        }} 
-                        className="w-full px-3 py-2 border rounded-lg text-sm tracking-widest" 
-                      />
-                    </div>
+
+      {modalEditar.visible && modalEditar.tienda && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black bg-opacity-60 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl animate-fade-in">
+            <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50 rounded-t-2xl">
+              <h3 className="text-xl font-black text-gray-900">Editar Datos de Tienda</h3>
+              <button onClick={() => setModalEditar({ visible: false, tienda: null })} className="text-gray-400 hover:text-red-500 font-bold">X</button>
+            </div>
+            
+            <div className="p-6 overflow-y-auto">
+              <form id="form-editar-tienda" onSubmit={guardarEdicionTienda} className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 mb-1">Nombre Comercial</label>
+                    <input type="text" name="nombre" value={modalEditar.tienda.nombre || ''} onChange={handleEditChange} className="w-full px-3 py-2 border rounded-lg text-sm" required />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 mb-1">RFC (Intocable)</label>
+                    <input type="text" name="rfc" value={modalEditar.tienda.rfc || ''} disabled className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-100 text-gray-500 font-mono cursor-not-allowed" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 mb-1">Teléfono (10 dígitos)</label>
+                    <input 
+                      type="tel" 
+                      name="telefono" 
+                      maxLength={10}
+                      value={modalEditar.tienda.telefono || ''} 
+                      onChange={(e) => {
+                        const soloNumeros = e.target.value.replace(/\D/g, '');
+                        handleEditChange({ target: { name: 'telefono', value: soloNumeros } });
+                      }} 
+                      className="w-full px-3 py-2 border rounded-lg text-sm tracking-widest" 
+                    />
+                  </div>
+                </div>
+
+                <h4 className="font-bold text-autoblue text-sm mt-6 border-b pb-1">Dirección</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="md:col-span-2">
+                    <label className="block text-xs font-bold text-gray-700 mb-1">Calle</label>
+                    <input type="text" name="calle" value={modalEditar.tienda.calle || ''} onChange={handleEditChange} className="w-full px-3 py-2 border rounded-lg text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 mb-1">Número</label>
+                    <input type="text" name="numero" value={modalEditar.tienda.numero || ''} onChange={handleEditChange} className="w-full px-3 py-2 border rounded-lg text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 mb-1">Colonia</label>
+                    <input type="text" name="colonia" value={modalEditar.tienda.colonia || ''} onChange={handleEditChange} className="w-full px-3 py-2 border rounded-lg text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 mb-1">Código Postal</label>
+                    <input type="text" name="codigoPostal" value={modalEditar.tienda.codigoPostal || ''} onChange={handleEditChange} className="w-full px-3 py-2 border rounded-lg text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 mb-1">Ciudad</label>
+                    <input type="text" name="ciudad" value={modalEditar.tienda.ciudad || ''} onChange={handleEditChange} className="w-full px-3 py-2 border rounded-lg text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 mb-1">Estado de la República</label>
+                    <select name="estadoRep" value={modalEditar.tienda.estadoRep || ''} onChange={handleEditChange} className="w-full px-3 py-2 border rounded-lg text-sm bg-white cursor-pointer" required>
+                      <option value="">Selecciona un Estado...</option>
+                      <option value="Aguascalientes">Aguascalientes</option>
+                      <option value="Ciudad de México">Ciudad de México</option>
+                      <option value="Estado de México">Estado de México</option>
+                      <option value="Jalisco">Jalisco</option>
+                      <option value="Nuevo León">Nuevo León</option>
+                      <option value="Puebla">Puebla</option>
+                    </select>
                   </div>
 
-                  <h4 className="font-bold text-autoblue text-sm mt-6 border-b pb-1">Dirección</h4>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="md:col-span-2">
-                      <label className="block text-xs font-bold text-gray-700 mb-1">Calle</label>
-                      <input type="text" name="calle" value={modalEditar.tienda.calle || ''} onChange={handleEditChange} className="w-full px-3 py-2 border rounded-lg text-sm" />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-gray-700 mb-1">Número</label>
-                      <input type="text" name="numero" value={modalEditar.tienda.numero || ''} onChange={handleEditChange} className="w-full px-3 py-2 border rounded-lg text-sm" />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-gray-700 mb-1">Colonia</label>
-                      <input type="text" name="colonia" value={modalEditar.tienda.colonia || ''} onChange={handleEditChange} className="w-full px-3 py-2 border rounded-lg text-sm" />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-gray-700 mb-1">Código Postal</label>
-                      <input type="text" name="codigoPostal" value={modalEditar.tienda.codigoPostal || ''} onChange={handleEditChange} className="w-full px-3 py-2 border rounded-lg text-sm" />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-gray-700 mb-1">Ciudad</label>
-                      <input type="text" name="ciudad" value={modalEditar.tienda.ciudad || ''} onChange={handleEditChange} className="w-full px-3 py-2 border rounded-lg text-sm" />
-                    </div>
-                   <div>
-                      <label className="block text-xs font-bold text-gray-700 mb-1">Estado de la República</label>
-                      <select 
-                        name="estadoRep" 
-                        value={modalEditar.tienda.estadoRep || ''} 
-                        onChange={handleEditChange} 
-                        className="w-full px-3 py-2 border rounded-lg text-sm bg-white cursor-pointer" 
-                        required
-                      >
-                        <option value="">Selecciona un Estado...</option>
-                        <option value="Aguascalientes">Aguascalientes</option>
-                        <option value="Baja California">Puebla</option>
-                        <option value="Ciudad de México">Ciudad de México</option>
-                        <option value="Estado de México">Estado de México</option>
-                        <option value="Jalisco">Jalisco</option>
-                        <option value="Nuevo León">Nuevo León</option>
-                        {/* Agrega el resto de los estados aquí */}
-                      </select>
-                    </div>
-                   {/* 🔥 MAPA DE EDICIÓN A TAMAÑO COMPLETO 🔥 */}
                   <div className="md:col-span-2 w-full mt-4">
                     <MapaAutoRed 
                       coordenadasIniciales={
@@ -429,20 +398,19 @@ export default function StoreManagement({
                       }}
                     />
                   </div>
-                  </div>
+                </div>
+              </form>
+            </div>
 
-                </form>
-              </div>
-
-              <div className="p-6 border-t border-gray-100 flex justify-end gap-3 bg-gray-50 rounded-b-2xl">
-                <button onClick={() => setModalEditar({ visible: false, tienda: null })} type="button" className="px-4 py-2 bg-white border border-gray-300 text-gray-700 font-bold rounded-lg text-sm hover:bg-gray-100">Cancelar</button>
-                <button form="form-editar-tienda" type="submit" disabled={guardandoEdicion} className="px-4 py-2 bg-autoblue text-white font-bold rounded-lg text-sm hover:bg-blue-900 disabled:opacity-50">
-                  {guardandoEdicion ? 'Guardando...' : 'Guardar Cambios'}
-                </button>
-              </div>
+            <div className="p-6 border-t border-gray-100 flex justify-end gap-3 bg-gray-50 rounded-b-2xl">
+              <button onClick={() => setModalEditar({ visible: false, tienda: null })} type="button" className="px-4 py-2 bg-white border border-gray-300 text-gray-700 font-bold rounded-lg text-sm hover:bg-gray-100">Cancelar</button>
+              <button form="form-editar-tienda" type="submit" disabled={guardandoEdicion} className="px-4 py-2 bg-autoblue text-white font-bold rounded-lg text-sm hover:bg-blue-900 disabled:opacity-50">
+                {guardandoEdicion ? 'Guardando...' : 'Guardar Cambios'}
+              </button>
             </div>
           </div>
-        )}
+        </div>
+      )}
     </div>
   );
 }
