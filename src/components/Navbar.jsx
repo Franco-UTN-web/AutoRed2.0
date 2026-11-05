@@ -1,23 +1,28 @@
-import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { Home, Info, MapPin, Package, Store, LogOut, LayoutDashboard, User, LogIn, Menu, X } from 'lucide-react';
-
 
 export default function Navbar() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [rol, setRol] = useState(null);
   const navigate = useNavigate();
+  const location = useLocation(); // Escucha los cambios de ruta y la carga inicial
 
-  // 1. Leemos la sesión
-  let rol = null;
-  try {
-    const datosUsuarioJson = localStorage.getItem('user_data');
-    if (datosUsuarioJson && datosUsuarioJson !== "undefined") {
-      const usuarioLogueado = JSON.parse(datosUsuarioJson);
-      rol = usuarioLogueado?.user_metadata?.role;
+  // 1. Lectura reactiva de la sesión desde localStorage
+  useEffect(() => {
+    try {
+      const datosUsuarioJson = localStorage.getItem('user_data');
+      if (datosUsuarioJson && datosUsuarioJson !== "undefined") {
+        const usuarioLogueado = JSON.parse(datosUsuarioJson);
+        setRol(usuarioLogueado?.user_metadata?.role || 'comprador');
+      } else {
+        setRol(null);
+      }
+    } catch (error) {
+      console.warn("Sesión corrupta detectada en el Navbar.");
+      setRol(null);
     }
-  } catch (error) {
-    console.warn("Sesión corrupta detectada en el Navbar.");
-  }
+  }, [location]);
 
   // 2. Lógica Dinámica de Navegación
   const handleAccionPrincipal = () => {
@@ -76,11 +81,11 @@ export default function Navbar() {
                 <svg className="w-4 h-4 ml-1 text-gray-400 group-hover:text-autoblue transition-transform duration-300 group-hover:rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
               </Link>
 
-             {/* Contenedor del Dropdown (Invisible por defecto, visible en hover) */}
+              {/* Contenedor del Dropdown */}
               <div className="absolute top-full left-1/2 -translate-x-1/2 pt-4 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-300 w-[650px] z-50">
                 <div className="bg-white rounded-2xl shadow-2xl border border-gray-100 p-6 grid grid-cols-3 gap-8 relative overflow-hidden">
                   
-                  {/* Decoración de fondo sutil */}
+                  {/* Decoración de fondo */}
                   <div className="absolute -top-10 -right-10 w-32 h-32 bg-blue-50 rounded-full blur-2xl opacity-50 pointer-events-none"></div>
 
                   {/* Columna 1: Categorías del Sistema */}
@@ -97,7 +102,7 @@ export default function Navbar() {
                     </ul>
                   </div>
 
-                  {/* Columna 2: Búsquedas Rápidas (Usando el parámetro 'q') */}
+                  {/* Columna 2: Búsquedas Rápidas */}
                   <div className="relative z-10">
                     <h4 className="text-autoblue font-black text-sm uppercase tracking-wider mb-4 flex items-center gap-2">
                       <div className="w-2 h-2 bg-autored rounded-full"></div> Más Buscados
@@ -192,9 +197,9 @@ export default function Navbar() {
             {rol && (
                <button 
                  onClick={() => {
-                 localStorage.clear();
-                 navigate('/login');
-                }}
+                   localStorage.clear();
+                   navigate('/login');
+                 }}
                  className="flex items-center justify-center gap-2 w-full text-red-600 bg-red-50 hover:bg-red-100 px-4 py-3.5 rounded-xl font-bold transition-colors mt-2"
                >
                  <LogOut size={20} /> Cerrar Sesión
