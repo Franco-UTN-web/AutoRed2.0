@@ -27,43 +27,57 @@ function App() {
   // ==========================================
   // ATRAPADOR DE SESIÓN DE GOOGLE (Corregido)
   // ==========================================
-  useEffect(() => {
-    const handleGoogleAuth = async () => {
-      const hash = window.location.hash;
-      
-      if (hash && hash.includes("access_token")) {
-        const params = new URLSearchParams(hash.substring(1));
-        const accessToken = params.get("access_token");
-        const type = params.get("type"); // DETECTAMOS EL TIPO DE ENLACE
+useEffect(() => {
+  const handleGoogleAuth = async () => {
+    const hash = window.location.hash;
+    
+    if (hash && hash.includes("access_token")) {
+      const params = new URLSearchParams(hash.substring(1));
+      const accessToken = params.get("access_token");
+      const type = params.get("type");
 
-        // 1. SI ES UN ENLACE DE RECUPERAR CONTRASEÑA
-        if (type === "recovery") {
-          localStorage.setItem('recovery_token', accessToken);
-          window.history.replaceState(null, null, '/actualizar-password');
-          window.location.reload();
-          return; // Detenemos aquí, NO iniciamos sesión
+      // 1. RECUPERACIÓN DE CONTRASEÑA
+      if (type === "recovery") {
+        localStorage.setItem('recovery_token', accessToken);
+        window.history.replaceState(null, null, '/actualizar-password');
+        window.location.reload();
+        return;
+      }
+
+      // 2. INICIO DE SESIÓN CON GOOGLE
+      try {
+        // Obtener usuario directamente del cliente Supabase activo
+        const { data: { user }, error } = await supabase.auth.getUser(accessToken);
+
+        if (error || !user) {
+          console.error("Error al obtener usuario de Supabase:", error);
+          return;
         }
 
-        // 2. SI ES UN INICIO DE SESIÓN CON GOOGLE NORMAL
-        try {
-          // Consultamos al proyecto activo mediante la librería de Supabase
-          const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-
-          if (error || !user) {
-            console.error("Error al obtener datos del usuario de Supabase:", error);
-            return;
+        // Estructura base del usuario
+        const userData = {
+          id: user.id,
+          email: user.email,
+          user_metadata: {
+            ...user.user_metadata,
+            role: 'comprador', // Rol por defecto inmediato
+            nombre: user.user_metadata?.nombre || user.user_metadata?.full_name || 'Usuario'
           }
+        };
 
-          if (!user.user_metadata) user.user_metadata = {};
+        // 🟢 PASO CLAVE: Guardar en localStorage INMEDIATAMENTE
+        localStorage.setItem('session_token', accessToken);
+        localStorage.setItem('user_data', JSON.stringify(userData));
 
-          // Sincronización con tu backend en Railway
+        // Intento de sincronización con Railway (sin bloquear el guardado local)
+        try {
           const syncResponse = await fetch('https://backautored-production.up.railway.app/api/login/sync', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               id: user.id,
               email: user.email,
-              nombre: user.user_metadata?.nombre || user.user_metadata?.full_name || 'Usuario'
+              nombre: userData.user_metadata.nombre
             })
           });
 
@@ -71,30 +85,31 @@ function App() {
             const syncData = await syncResponse.json();
             if (syncData.activo === 'false' || syncData.activo === false) {
               alert('Acceso denegado: Tu cuenta ha sido suspendida.');
-              window.history.replaceState(null, null, window.location.pathname);
+              localStorage.clear();
               window.location.href = '/login'; 
               return; 
             }
-            user.user_metadata.role = syncData.rol || 'comprador';
-            user.user_metadata.nombre = syncData.nombre;
+            // Actualizar rol real si Railway responde con éxito
+            userData.user_metadata.role = syncData.rol || 'comprador';
+            userData.user_metadata.nombre = syncData.nombre || userData.user_metadata.nombre;
+            localStorage.setItem('user_data', JSON.stringify(userData));
           }
-
-          // Guardamos la sesión y los datos del usuario en localStorage
-          localStorage.setItem('session_token', accessToken);
-          localStorage.setItem('user_data', JSON.stringify(user));
-          
-          // Limpiamos el hash de la URL y recargamos para aplicar la sesión
-          window.history.replaceState(null, null, window.location.pathname);
-          window.location.reload(); 
-
-        } catch (err) {
-          console.error("Error en la sincronización:", err);
+        } catch (backendErr) {
+          console.warn("Backend Railway no disponible o lento, continuando con datos locales:", backendErr);
         }
-      }
-    };
 
-    handleGoogleAuth();
-  }, []);
+        // Limpiar URL y redirigir formalmente a /inicio
+        window.history.replaceState(null, null, '/inicio');
+        window.location.href = '/inicio'; 
+
+      } catch (err) {
+        console.error("Error crítico en autenticación:", err);
+      }
+    }
+  };
+
+  handleGoogleAuth();
+}, []);
   // ==========================================
 
   return (
