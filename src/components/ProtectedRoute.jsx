@@ -1,59 +1,83 @@
+import { useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
-import { useState, useEffect } from 'react';
+import { supabase } from '../supabase';
 
-export default function ProtectedRoute({ children, allowedRoles }) {
-  const [estado, setEstado] = useState('cargando');
-  const [usuario, setUsuario] = useState(null);
+export default function ProtectedRoute({ children, allowedRoles = [] }) {
+  const [loading, setLoading] = useState(true);
+  const [autorizado, setAutorizado] = useState(false);
 
   useEffect(() => {
     const verificarAcceso = async () => {
-      const sessionData = localStorage.getItem('user_data');
-      if (!sessionData || sessionData === "undefined") {
-        setEstado('denegado');
-        return;
-      }
-
-      const userData = JSON.parse(sessionData);
-      setUsuario(userData);
-
       try {
-        // Le preguntamos a Java si este usuario no está suspendido
-        // (Asumiendo que tienes este endpoint o el de obtener todos los usuarios)
-        const res = await fetch('https://backautored-production.up.railway.app/api/admin/usuarios'); 
-        if (res.ok) {
-          const usuariosDB = await res.json();
-          const miUsuarioBD = usuariosDB.find(u => u.id === userData.id);
-          
-          if (miUsuarioBD && miUsuarioBD.estado === 'Suspendido') {
-            // ¡Cuenta suspendida! Lo sacamos del sistema
-            localStorage.removeItem('user_data');
-            localStorage.removeItem('session_token');
-            alert("Acceso denegado: Tu cuenta de AutoRed ha sido suspendida por el administrador.");
-            setEstado('suspendido');
-            return;
+        // 1. Obtener usuario de la sesión activa de Supabase
+        const { data: { user } } = await supabase.auth.getUser();
+
+        if (!user) {
+          setAutorizado(false);
+          setLoading(false);
+          return;
+        }
+
+        // 2. Consultar ROL FRESCO directamente en la base de datos
+        const { data: perfil } = await supabase
+          .from('perfiles')
+          .select('rol, activo')
+          .eq('id', user.id)
+          .maybeSingle();
+
+        const rolActual = perfil?.rol || user.user_metadata?.role || 'comprador';
+
+        // 3. Sincronizar el rol fresco en el localStorage para que el Navbar responda
+        const datosLocales = localStorage.getItem('user_data');
+        if (datosLocales && datosLocales !== "undefined") {
+          try {
+            const parsed = JSON.parse(datosLocales);
+            parsed.rol = rolActual;
+            if (parsed.user_metadata) parsed.user_metadata.role = rolActual;
+            localStorage.setItem('user_data', JSON.stringify(parsed));
+          } catch (e) {
+            console.warn("Error parseando user_data local");
           }
         }
-        setEstado('permitido');
+
+        if (perfil && perfil.activo === false) {
+          alert('Tu cuenta se encuentra suspendida por un administrador.');
+          await supabase.auth.signOut();
+          localStorage.clear();
+          setAutorizado(false);
+          setLoading(false);
+          return;
+        }
+
+        // 4. Verificar si el rol actual coincide con los roles permitidos
+        if (allowedRoles.includes(rolActual)) {
+          setAutorizado(true);
+        } else {
+          setAutorizado(false);
+        }
       } catch (error) {
-        // Si el servidor está apagado, lo dejamos pasar por ahora (o puedes bloquearlo)
-        setEstado('permitido'); 
+        console.error("Error verificando permisos de usuario:", error);
+        setAutorizado(false);
+      } finally {
+        setLoading(false);
       }
     };
 
     verificarAcceso();
-  }, []);
+  }, [allowedRoles]);
 
-  if (estado === 'cargando') {
-    return <div className="flex h-screen items-center justify-center font-bold text-gray-500">Verificando credenciales de seguridad...</div>;
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 text-gray-500 font-medium">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-8 h-8 border-4 border-autoblue border-t-transparent rounded-full animate-spin"></div>
+          <p className="text-sm font-bold text-gray-600">Verificando credenciales de seguridad...</p>
+        </div>
+      </div>
+    );
   }
 
-  if (estado === 'suspendido' || estado === 'denegado') {
-    return <Navigate to="/login" replace />;
-  }
-
-  // Verificamos el rol
-  const userRole = usuario?.user_metadata?.role || 'comprador';
-  if (allowedRoles && !allowedRoles.includes(userRole)) {
+  if (!autorizado) {
     return <Navigate to="/inicio" replace />;
   }
 
