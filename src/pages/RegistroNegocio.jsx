@@ -18,22 +18,19 @@ export default function RegistroNegocio() {
   const [estado, setEstado] = useState('formulario'); 
   const [mensajeError, setMensajeError] = useState('');
   const [campoActivo, setCampoActivo] = useState('');
-  // const [latitud, setLatitud] = useState(null);
-  // const [longitud, setLongitud] = useState(null);
-  // Búscalos alrededor de las líneas 15-20 de tu archivo RegistroNegocio.jsx
-const [latitud, setLatitud] = useState("19.4000"); // <-- Pon un valor fijo inicial aquí
-const [longitud, setLongitud] = useState("-99.0000"); // <-- Pon un valor fijo inicial aquí
+  
+  // 🟢 Coordenadas dinámicas (inician en punto por defecto pero cambian al usar el mapa)
+  const [latitud, setLatitud] = useState("19.4000"); 
+  const [longitud, setLongitud] = useState("-99.0000"); 
 
   useEffect(() => {
     const verificarUsuario = async () => {
-      // 1. Intentar obtener el usuario directo de la sesión de Supabase
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
         setUsuario(user);
         return;
       }
 
-      // 2. Fallback a localStorage si guardaste user_data
       const datosUsuarioJson = localStorage.getItem('user_data');
       if (datosUsuarioJson && datosUsuarioJson !== "undefined") {
         const u = JSON.parse(datosUsuarioJson);
@@ -46,34 +43,30 @@ const [longitud, setLongitud] = useState("-99.0000"); // <-- Pon un valor fijo i
     verificarUsuario();
   }, [navigate]);
 
-const subirDocumentoASupabase = async (file, tipo, uid) => {
-  if (!file) return null;
-  
-  const fileExt = file.name.split('.').pop();
-  // Evitar caracteres especiales en la ruta del archivo
-  const fileName = `${uid || 'usuario'}_${tipo}_${Date.now()}.${fileExt}`;
+  const subirDocumentoASupabase = async (file, tipo, uid) => {
+    if (!file) return null;
+    
+    const fileExt = file.name.split('.').pop();
+    const fileName = `${uid || 'usuario'}_${tipo}_${Date.now()}.${fileExt}`;
 
-  // Subida directa al bucket 'documentos'
-  const { data, error } = await supabase.storage
-    .from('documentos')
-    .upload(fileName, file, { 
-      cacheControl: '3600',
-      upsert: true 
-    });
+    const { error } = await supabase.storage
+      .from('documentos')
+      .upload(fileName, file, { 
+        cacheControl: '3600',
+        upsert: true 
+      });
 
-  if (error) {
-    console.error(`Error exacto de Supabase Storage en ${tipo}:`, error);
-    // Retornamos null para que el registro del negocio en la BD pueda continuar sin tumbar la app
-    return null; 
-  }
+    if (error) {
+      console.error(`Error exacto de Supabase Storage en ${tipo}:`, error);
+      return null; 
+    }
 
-  // Obtener URL pública
-  const { data: publicUrlData } = supabase.storage
-    .from('documentos')
-    .getPublicUrl(fileName);
+    const { data: publicUrlData } = supabase.storage
+      .from('documentos')
+      .getPublicUrl(fileName);
 
-  return publicUrlData?.publicUrl || null;
-};
+    return publicUrlData?.publicUrl || null;
+  };
 
   const validarFormulario = () => {
     if (!formData.nombre.trim()) { setMensajeError("Falta ingresar el Nombre de la Refaccionaria."); return false; }
@@ -131,12 +124,11 @@ const subirDocumentoASupabase = async (file, tipo, uid) => {
     try {
       const propietarioId = usuario?.id || usuario?.user_id;
 
-      // 1. Subir los documentos de forma segura
       const urlCSF = await subirDocumentoASupabase(archivoCSF, 'CSF', propietarioId);
       const urlINE = await subirDocumentoASupabase(archivoINE, 'INE', propietarioId);
 
-      // 2. Insertar en la tabla 'establecimientos' coincidiendo exactamente con tu base de datos
-      const { data, error } = await supabase
+      // 🟢 Guarda las coordenadas dinámicas del estado 'latitud' y 'longitud'
+      const { error } = await supabase
         .from('establecimientos')
         .insert([
           {
@@ -152,10 +144,8 @@ const subirDocumentoASupabase = async (file, tipo, uid) => {
             propietario_id: propietarioId,
             doc_csf_url: urlCSF,
             doc_ine_url: urlINE,
-            // latitud: latitud ? String(latitud) : null,
-            // longitud: longitud ? String(longitud) : null,
-            latitud: "19.4000",
-            longitud: "-99.0000",
+            latitud: latitud ? String(latitud) : "19.4000",
+            longitud: longitud ? String(longitud) : "-99.0000",
             estado: 'PENDIENTE'
           }
         ]);
@@ -317,12 +307,12 @@ const subirDocumentoASupabase = async (file, tipo, uid) => {
                       onDireccionEncontrada={(datosMapa) => {
                         setFormData(prev => ({
                           ...prev,
-                          calle: datosMapa.calle,
-                          numero: datosMapa.numero,
-                          colonia: datosMapa.colonia,
-                          cp: datosMapa.cp,
-                          ciudad: datosMapa.ciudad,
-                          estado_rep: datosMapa.estado_rep 
+                          calle: datosMapa.calle || prev.calle,
+                          numero: datosMapa.numero || prev.numero,
+                          colonia: datosMapa.colonia || prev.colonia,
+                          cp: datosMapa.cp || prev.cp,
+                          ciudad: datosMapa.ciudad || prev.ciudad,
+                          estado_rep: datosMapa.estado_rep || prev.estado_rep 
                         }));
                       }}
                     />

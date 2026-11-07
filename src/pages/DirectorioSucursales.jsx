@@ -20,7 +20,13 @@ const centroPorDefecto = [19.4326, -99.1332];
 function RecenterMap({ coordenadas, zoom }) {
   const map = useMap();
   useEffect(() => {
-    if (coordenadas && Array.isArray(coordenadas) && coordenadas[0] && coordenadas[1]) {
+    if (
+      coordenadas &&
+      Array.isArray(coordenadas) &&
+      coordenadas.length === 2 &&
+      !isNaN(parseFloat(coordenadas[0])) &&
+      !isNaN(parseFloat(coordenadas[1]))
+    ) {
       map.setView(coordenadas, zoom, { animate: true });
     }
   }, [coordenadas, zoom, map]);
@@ -54,7 +60,13 @@ export default function DirectorioSucursales() {
           );
           setSucursales(activas);
 
-          const primeraConCoords = activas.find(t => t.latitud && t.longitud);
+          // Buscar la primera tienda con coordenadas válidas para centrar el mapa
+          const primeraConCoords = activas.find(t => {
+            const lat = parseFloat(t.latitud);
+            const lng = parseFloat(t.longitud);
+            return !isNaN(lat) && !isNaN(lng);
+          });
+
           if (primeraConCoords) {
             setMapCenter([parseFloat(primeraConCoords.latitud), parseFloat(primeraConCoords.longitud)]);
           }
@@ -73,12 +85,16 @@ export default function DirectorioSucursales() {
     setTiendaSeleccionada(tienda);
     setAlertaMapa('');
     
-    if (tienda.latitud && tienda.longitud) {
-      const coordsExactas = [parseFloat(tienda.latitud), parseFloat(tienda.longitud)];
-      setMapCenter(coordsExactas);
+    const lat = parseFloat(tienda.latitud);
+    const lng = parseFloat(tienda.longitud);
+
+    // Si tiene coordenadas exactas válidas, las asigna directamente
+    if (!isNaN(lat) && !isNaN(lng)) {
+      setMapCenter([lat, lng]);
       return;
     }
 
+    // Si no tiene coordenadas válidas, intenta geo-localizar mediante Nominatim
     const calle = tienda.calle || '';
     const numero = tienda.numero || '';
     const colonia = tienda.colonia || '';
@@ -92,9 +108,11 @@ export default function DirectorioSucursales() {
       const data = await res.json();
 
       if (data && data.length > 0) {
-        const lat = parseFloat(data[0].lat);
-        const lng = parseFloat(data[0].lon);
-        setMapCenter([lat, lng]);
+        const latNom = parseFloat(data[0].lat);
+        const lngNom = parseFloat(data[0].lon);
+        if (!isNaN(latNom) && !isNaN(lngNom)) {
+          setMapCenter([latNom, lngNom]);
+        }
       } else {
         setAlertaMapa("📍 Tienda antigua sin pin exacto. Mostrando el mapa general.");
       }
@@ -115,7 +133,7 @@ export default function DirectorioSucursales() {
 
         <div className="flex flex-col lg:flex-row gap-6 lg:h-[75vh]">
           
-          {/* SUCURSALES */}
+          {/* COLUMNA IZQUIERDA (LISTA DE SUCURSALES) */}
           <div className="w-full lg:w-1/3 bg-white border border-gray-200 rounded-2xl shadow-sm flex flex-col overflow-hidden h-[400px] lg:h-full">
             <div className="p-4 border-b border-gray-100 bg-gray-50 shrink-0">
               <h3 className="font-black text-gray-900">Sucursales Activas ({sucursales.length})</h3>
@@ -158,7 +176,7 @@ export default function DirectorioSucursales() {
             </div>
           </div>
 
-          {/* MAPA */}
+          {/* COLUMNA DERECHA (MAPA) */}
           <div className="w-full lg:w-2/3 bg-gray-200 border border-gray-200 rounded-2xl shadow-sm relative overflow-hidden z-0 h-[400px] lg:h-full">
             
             {alertaMapa && (
@@ -189,18 +207,24 @@ export default function DirectorioSucursales() {
               <RecenterMap coordenadas={mapCenter} zoom={tiendaSeleccionada ? 16 : 6} />
 
               {sucursales.map(t => {
-                if (!t.latitud || !t.longitud) return null;
-                const pos = [parseFloat(t.latitud), parseFloat(t.longitud)];
+                const lat = parseFloat(t.latitud);
+                const lng = parseFloat(t.longitud);
+
+                // 🛑 FILTRO DE SEGURIDAD: Descarta pines que tengan coordenadas nulas o inválidas
+                if (isNaN(lat) || isNaN(lng)) return null;
+
+                const pos = [lat, lng];
+                const telefonoLimpio = t.telefono ? String(t.telefono).replace(/\D/g, '') : '';
 
                 return (
                   <Marker key={`pin-${t.id}`} position={pos} eventHandlers={{ click: () => setTiendaSeleccionada(t) }}>
                     <Popup>
                       <div className="p-1 max-w-[200px] text-center">
-                        <h4 className="font-black text-gray-900 text-sm">{t.nombre}</h4>
-                        <p className="text-xs text-gray-600 mt-1">{t.calle} #{t.numero}</p>
-                        {t.telefono && (
+                        <h4 className="font-black text-gray-900 text-sm">{t.nombre || 'Sucursal'}</h4>
+                        <p className="text-xs text-gray-600 mt-1">{t.calle ? `${t.calle} #${t.numero || ''}` : 'Sin dirección registrada'}</p>
+                        {telefonoLimpio && (
                           <a 
-                            href={`https://wa.me/${t.telefono.replace(/\D/g, '')}`} 
+                            href={`https://wa.me/${telefonoLimpio}`} 
                             target="_blank" 
                             rel="noopener noreferrer" 
                             className="mt-2 text-xs bg-green-500 hover:bg-green-600 text-white font-bold px-2 py-1.5 rounded block transition-colors"
