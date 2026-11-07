@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { Home, MapPin, Package, Store, LogOut, LayoutDashboard, User, LogIn, Menu, X } from 'lucide-react';
-import { supabase } from '@/supabase';
+import { supabase } from '../supabase';
 
 export default function Navbar() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -9,60 +9,70 @@ export default function Navbar() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  // 1. Lectura reactiva de la sesión desde Supabase y localStorage
   useEffect(() => {
+    // 1. Cargar rol al montar o cambiar de ruta
     obtenerRolUsuario();
+
+    // 2. Suscribirse a cambios en la autenticación (Login, Logout, Token Refresh)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+        if (session?.user) {
+          consultarPerfilBD(session.user);
+        }
+      } else if (event === 'SIGNED_OUT') {
+        setRol(null);
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, [location]);
+
+  const consultarPerfilBD = async (user) => {
+    try {
+      const { data: perfil } = await supabase
+        .from('perfiles')
+        .select('rol')
+        .eq('id', user.id)
+        .maybeSingle();
+
+      const rolFinal = perfil?.rol || user?.user_metadata?.role || user?.user_metadata?.rol || 'comprador';
+      setRol(rolFinal);
+    } catch (error) {
+      setRol('comprador');
+    }
+  };
 
   const obtenerRolUsuario = async () => {
     try {
-      // Intentar obtener usuario autenticado desde Supabase Auth
       const { data: { user } } = await supabase.auth.getUser();
 
-      console.log("1. Usuario autenticado en Auth:", user?.email, "ID:", user?.id);
-
       if (user) {
-        // Consultar el rol en la tabla perfiles de Supabase
-        const { data: perfil } = await supabase
-          .from('perfiles')
-          .select('rol')
-          .eq('id', user.id)
-          .maybeSingle();
-
-        console.log("2. Respuesta de la consulta a perfiles:", perfil, "Error:", error);
-
-        const rolFinal = perfil?.rol || user?.user_metadata?.role || user?.user_metadata?.rol || 'comprador';
-
-        console.log("3. Rol final detectado:", rolFinal);
-
-        setRol(rolFinal);
+        await consultarPerfilBD(user);
       } else {
-        // Fallback si la sesión está en localStorage
         const datosUsuarioJson = localStorage.getItem('user_data');
         if (datosUsuarioJson && datosUsuarioJson !== "undefined") {
           const usuarioLogueado = JSON.parse(datosUsuarioJson);
-          const rolLocal = usuarioLogueado?.rol || usuarioLogueado?.user_metadata?.role || 'comprador';
+          const rolLocal = usuarioLogueado?.rol || usuarioLogueado?.user_metadata?.role || null;
           setRol(rolLocal);
         } else {
           setRol(null);
         }
       }
     } catch (error) {
-      console.warn("Error consultando sesión/rol en Navbar:", error);
       setRol(null);
     }
   };
 
-  // 2. Lógica Dinámica de Navegación
   const handleAccionPrincipal = () => {
     setIsMenuOpen(false); 
     if (rol === 'tienda') navigate('/dashboard/store');
-    else if (rol === 'admin' || rol === 'administrador') navigate('/dashboard/admin'); // Redirige a tu panel de Admin
+    else if (rol === 'admin' || rol === 'administrador') navigate('/admin'); 
     else if (rol === 'comprador') navigate('/dashboard/customer'); 
     else navigate('/login'); 
   };
 
-  // 3. Textos e Íconos dinámicos para el botón principal
   const obtenerTextoBoton = () => {
     if (rol === 'tienda') return 'Mi Mostrador';
     if (rol === 'admin' || rol === 'administrador') return 'Panel de Control';
@@ -102,7 +112,6 @@ export default function Navbar() {
 
           {/* MENÚ ESCRITORIO */}
           <div className="hidden lg:flex items-center space-x-2">
-            
             <Link to="/inicio" className="flex items-center gap-2 text-gray-600 hover:text-autoblue hover:bg-blue-50 px-4 py-2.5 rounded-xl font-bold text-sm transition-all">
               <Home size={18} /> Inicio
             </Link>
@@ -117,14 +126,8 @@ export default function Navbar() {
                 <svg className="w-4 h-4 ml-1 text-gray-400 group-hover:text-autoblue transition-transform duration-300 group-hover:rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
               </Link>
 
-              {/* Contenedor del Dropdown */}
               <div className="absolute top-full left-1/2 -translate-x-1/2 pt-4 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-300 w-[650px] z-50">
                 <div className="bg-white rounded-2xl shadow-2xl border border-gray-100 p-6 grid grid-cols-3 gap-8 relative overflow-hidden">
-                  
-                  {/* Decoración de fondo */}
-                  <div className="absolute -top-10 -right-10 w-32 h-32 bg-blue-50 rounded-full blur-2xl opacity-50 pointer-events-none"></div>
-
-                  {/* Columna 1: Categorías */}
                   <div className="relative z-10">
                     <h4 className="text-autoblue font-black text-sm uppercase tracking-wider mb-4 flex items-center gap-2">
                       <div className="w-2 h-2 bg-autored rounded-full"></div> Sistemas
@@ -133,12 +136,9 @@ export default function Navbar() {
                       <li><Link to="/catalogo?categoria=Suspensión" className="hover:text-autored hover:translate-x-1 inline-block transition-transform">Suspensión y Dirección</Link></li>
                       <li><Link to="/catalogo?categoria=Frenos" className="hover:text-autored hover:translate-x-1 inline-block transition-transform">Sistema de Frenos</Link></li>
                       <li><Link to="/catalogo?categoria=Motor" className="hover:text-autored hover:translate-x-1 inline-block transition-transform">Motor</Link></li>
-                      <li><Link to="/catalogo?categoria=Transmisión" className="hover:text-autored hover:translate-x-1 inline-block transition-transform">Transmisión</Link></li>
-                      <li><Link to="/catalogo?categoria=Eléctrico" className="hover:text-autored hover:translate-x-1 inline-block transition-transform">Eléctrico</Link></li>
                     </ul>
                   </div>
 
-                  {/* Columna 2: Búsquedas Rápidas */}
                   <div className="relative z-10">
                     <h4 className="text-autoblue font-black text-sm uppercase tracking-wider mb-4 flex items-center gap-2">
                       <div className="w-2 h-2 bg-autored rounded-full"></div> Más Buscados
@@ -146,17 +146,12 @@ export default function Navbar() {
                     <ul className="space-y-3 text-sm font-medium text-gray-500">
                       <li><Link to="/catalogo?q=amortiguador" className="hover:text-autored hover:translate-x-1 inline-block transition-transform">Amortiguadores</Link></li>
                       <li><Link to="/catalogo?q=balata" className="hover:text-autored hover:translate-x-1 inline-block transition-transform">Balatas y Discos</Link></li>
-                      <li><Link to="/catalogo?q=filtro" className="hover:text-autored hover:translate-x-1 inline-block transition-transform">Filtros de Aceite/Aire</Link></li>
-                      <li><Link to="/catalogo?q=bujia" className="hover:text-autored hover:translate-x-1 inline-block transition-transform">Bujías y Bobinas</Link></li>
-                      <li><Link to="/catalogo?q=banda" className="hover:text-autored hover:translate-x-1 inline-block transition-transform">Bandas de Tiempo</Link></li>
                     </ul>
                   </div>
 
-                  {/* Columna 3: Oferta */}
                   <div className="bg-gray-50 -my-6 -mr-6 p-6 border-l border-gray-100 flex flex-col justify-center relative z-10">
                     <span className="bg-autored text-white text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded w-max mb-3">Oferta del mes</span>
                     <h4 className="text-gray-900 font-black mb-2 leading-tight">Kits de Afinación</h4>
-                    <p className="text-xs text-gray-500 mb-4 font-medium">Encuentra todo lo necesario para tu servicio.</p>
                     <Link to="/catalogo?q=afinacion" className="text-xs font-bold text-autoblue hover:text-blue-800 flex items-center gap-1">
                       Ver kits completos <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7"></path></svg>
                     </Link>
@@ -165,7 +160,6 @@ export default function Navbar() {
               </div>
             </div>
 
-            {/* DIVISOR VERTICAL */}
             <div className="h-6 w-px bg-gray-200 mx-2"></div>
 
             {/* BOTÓN PRINCIPAL DINÁMICO */}
@@ -205,7 +199,6 @@ export default function Navbar() {
       {isMenuOpen && (
         <div className="lg:hidden bg-white/95 backdrop-blur-xl border-t border-gray-100 shadow-2xl absolute w-full left-0 animate-fade-in">
           <div className="px-4 pt-4 pb-6 space-y-2 flex flex-col max-h-[80vh] overflow-y-auto">
-            
             <Link to="/inicio" onClick={() => setIsMenuOpen(false)} className="flex items-center gap-3 text-gray-700 hover:text-autoblue hover:bg-blue-50 px-4 py-3.5 rounded-xl font-bold transition-colors">
               <Home size={20} className="text-gray-400" /> Inicio
             </Link>

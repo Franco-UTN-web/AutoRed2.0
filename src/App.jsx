@@ -1,8 +1,7 @@
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import RolesPanel from './pages/RolesPanel';
 import { useEffect } from 'react';
-import { supabase } from './supabase'; // Asegúrate de ajustar esta ruta si tu cliente está en otra carpeta
-
+import { supabase } from './supabase';
 
 import Navbar from './components/Navbar';
 import ChatWindow from './components/ChatWindow';
@@ -27,91 +26,90 @@ import AdminDashboard from './pages/dashboards/admin/AdminDashboard';
 function App() {
 
   // ==========================================
-  // ATRAPADOR DE SESIÓN DE GOOGLE (Corregido)
+  // ATRAPADOR DE SESIÓN DE GOOGLE (DIRECTO A SUPABASE)
   // ==========================================
-useEffect(() => {
-  const handleGoogleAuth = async () => {
-    const hash = window.location.hash;
-    
-    if (hash && hash.includes("access_token")) {
-      const params = new URLSearchParams(hash.substring(1));
-      const accessToken = params.get("access_token");
-      const type = params.get("type");
+  useEffect(() => {
+    const handleGoogleAuth = async () => {
+      const hash = window.location.hash;
+      
+      if (hash && hash.includes("access_token")) {
+        const params = new URLSearchParams(hash.substring(1));
+        const accessToken = params.get("access_token");
+        const type = params.get("type");
 
-      // 1. RECUPERACIÓN DE CONTRASEÑA
-      if (type === "recovery") {
-        localStorage.setItem('recovery_token', accessToken);
-        window.history.replaceState(null, null, '/actualizar-password');
-        window.location.reload();
-        return;
-      }
-
-      // 2. INICIO DE SESIÓN CON GOOGLE
-      try {
-        // Obtener usuario directamente del cliente Supabase activo
-        const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-
-        if (error || !user) {
-          console.error("Error al obtener usuario de Supabase:", error);
+        // 1. RECUPERACIÓN DE CONTRASEÑA
+        if (type === "recovery") {
+          localStorage.setItem('recovery_token', accessToken);
+          window.history.replaceState(null, null, '/actualizar-password');
+          window.location.reload();
           return;
         }
 
-        // Estructura base del usuario
-        const userData = {
-          id: user.id,
-          email: user.email,
-          user_metadata: {
-            ...user.user_metadata,
-            role: 'comprador', // Rol por defecto inmediato
-            nombre: user.user_metadata?.nombre || user.user_metadata?.full_name || 'Usuario'
-          }
-        };
-
-        // 🟢 PASO CLAVE: Guardar en localStorage INMEDIATAMENTE
-        localStorage.setItem('session_token', accessToken);
-        localStorage.setItem('user_data', JSON.stringify(userData));
-
-        // Intento de sincronización con Railway (sin bloquear el guardado local)
+        // 2. INICIO DE SESIÓN CON GOOGLE
         try {
-          const syncResponse = await fetch('https://backautored-production.up.railway.app/api/login/sync', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              id: user.id,
-              email: user.email,
-              nombre: userData.user_metadata.nombre
-            })
-          });
+          const { data: { user }, error } = await supabase.auth.getUser(accessToken);
 
-          if (syncResponse.ok) {
-            const syncData = await syncResponse.json();
-            if (syncData.activo === 'false' || syncData.activo === false) {
-              alert('Acceso denegado: Tu cuenta ha sido suspendida.');
-              localStorage.clear();
-              window.location.href = '/login'; 
-              return; 
-            }
-            // Actualizar rol real si Railway responde con éxito
-            userData.user_metadata.role = syncData.rol || 'comprador';
-            userData.user_metadata.nombre = syncData.nombre || userData.user_metadata.nombre;
-            localStorage.setItem('user_data', JSON.stringify(userData));
+          if (error || !user) {
+            console.error("Error al obtener usuario de Supabase:", error);
+            return;
           }
-        } catch (backendErr) {
-          console.warn("Backend Railway no disponible o lento, continuando con datos locales:", backendErr);
+
+          // Consultar perfil en Supabase sin depender de Railway
+          const { data: perfil } = await supabase
+            .from('perfiles')
+            .select('rol, activo, nombre')
+            .eq('id', user.id)
+            .maybeSingle();
+
+          if (perfil && perfil.activo === false) {
+            alert('Acceso denegado: Tu cuenta ha sido suspendida.');
+            await supabase.auth.signOut();
+            localStorage.clear();
+            window.location.href = '/login'; 
+            return; 
+          }
+
+          let rolFinal = perfil?.rol;
+          let nombreFinal = perfil?.nombre || user.user_metadata?.nombre || user.user_metadata?.full_name || 'Usuario';
+
+          // Crear perfil inicial si el usuario ingresa por primera vez con Google
+          if (!perfil) {
+            rolFinal = 'comprador';
+            await supabase.from('perfiles').upsert({
+              id: user.id,
+              nombre: nombreFinal,
+              email: user.email,
+              rol: 'comprador',
+              activo: true
+            });
+          }
+
+          const userData = {
+            id: user.id,
+            email: user.email,
+            rol: rolFinal,
+            user_metadata: {
+              ...user.user_metadata,
+              role: rolFinal,
+              nombre: nombreFinal
+            }
+          };
+
+          localStorage.setItem('session_token', accessToken);
+          localStorage.setItem('user_data', JSON.stringify(userData));
+
+          // Limpiar URL y redirigir
+          window.history.replaceState(null, null, '/inicio');
+          window.location.href = '/inicio'; 
+
+        } catch (err) {
+          console.error("Error crítico en autenticación:", err);
         }
-
-        // Limpiar URL y redirigir formalmente a /inicio
-        window.history.replaceState(null, null, '/inicio');
-        window.location.href = '/inicio'; 
-
-      } catch (err) {
-        console.error("Error crítico en autenticación:", err);
       }
-    }
-  };
+    };
 
-  handleGoogleAuth();
-}, []);
+    handleGoogleAuth();
+  }, []);
   // ==========================================
 
   return (
@@ -148,7 +146,7 @@ useEffect(() => {
             } /> 
             
             <Route path="/dashboard/admin" element={
-              <ProtectedRoute allowedRoles={['admin']}>
+              <ProtectedRoute allowedRoles={['admin', 'administrador']}>
                 <AdminDashboard />
               </ProtectedRoute>
             } />

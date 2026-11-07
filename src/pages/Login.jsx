@@ -58,7 +58,6 @@ export default function Login() {
           throw new Error('Este correo ya está registrado en AutoRed. Por favor, cambia a "Iniciar Sesión" o recupera tu contraseña.');
         }
 
-        // Crear la fila inicial en la tabla 'perfiles' de Supabase
         if (data?.user) {
           await supabase.from('perfiles').upsert({
             id: data.user.id,
@@ -76,7 +75,6 @@ export default function Login() {
         setFullName('');
 
       } else {
-        // 🟢 INICIAR SESIÓN DIRECTO CON SUPABASE
         const { data, error } = await supabase.auth.signInWithPassword({
           email: email,
           password: password,
@@ -84,7 +82,6 @@ export default function Login() {
 
         if (error) throw new Error('Credenciales incorrectas o correo sin verificar.');
 
-        // 🟢 CONSULTAR EL ROL DIRECTO DESDE LA TABLA PERFILES DE SUPABASE
         const { data: perfil, error: perfilError } = await supabase
           .from('perfiles')
           .select('rol, activo, nombre')
@@ -95,7 +92,6 @@ export default function Login() {
           console.warn("Error leyendo perfil de Supabase:", perfilError.message);
         }
 
-        // Verificar si la cuenta está activa
         if (perfil && perfil.activo === false) {
           await supabase.auth.signOut();
           throw new Error('Acceso denegado: Tu cuenta ha sido suspendida por un administrador.');
@@ -104,7 +100,6 @@ export default function Login() {
         const rolDetectado = perfil?.rol || data.user.user_metadata?.role || 'comprador';
         const nombreDetectado = perfil?.nombre || data.user.user_metadata?.nombre || 'Usuario';
 
-        // Guardar metadata local
         const userActualizado = {
           ...data.user,
           rol: rolDetectado,
@@ -118,7 +113,6 @@ export default function Login() {
         localStorage.setItem('session_token', data.session.access_token);
         localStorage.setItem('user_data', JSON.stringify(userActualizado));
 
-        // 🟢 REDIRECCIÓN SEGÚN ROL SIN SALIRSE DE LOCALHOST
         if (rolDetectado === 'admin' || rolDetectado === 'administrador') {
           navigate('/dashboard/admin');
         } else if (rolDetectado === 'tienda') {
@@ -136,7 +130,6 @@ export default function Login() {
   };
 
   const handleGoogleLogin = async () => {
-    // 🟢 REDIRECCIÓN DINÁMICA: Si estás en localhost vuelve a localhost, si estás en Vercel vuelve a Vercel
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: { redirectTo: `${window.location.origin}/inicio` }
@@ -304,7 +297,6 @@ export default function Login() {
               )}
             </button>
             
-            {/* BOTÓN DE GOOGLE SIEMPRE VISIBLE */}
             <div className="mt-6 pt-6 border-t border-gray-100 text-center animate-fade-in">
               <p className="text-xs text-gray-400 font-bold uppercase tracking-wider mb-4">O continúa con</p>
               <button 
