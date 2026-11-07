@@ -27,12 +27,17 @@ export default function Login() {
       return; 
     }
 
-    const passwordRegex = /^(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*(),.?":{}|<>_.-]).{6,}$/;
-    if (!passwordRegex.test(password)) {
-      setErrorMsg('La contraseña debe tener al menos 6 caracteres, incluir una letra mayúscula, un número y un carácter especial.');
-      setCargando(false);
-      return; 
+    // 🟢 LA REGLA ESTRICTA DE CONTRASEÑA SOLO APLICA AL CREAR CUENTA
+    if (activeTab === 'signup') {
+      const passwordRegex = /^(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*(),.?":{}|<>_.-]).{6,}$/;
+      if (!passwordRegex.test(password)) {
+        setErrorMsg('La contraseña debe tener al menos 6 caracteres, incluir una letra mayúscula, un número y un carácter especial.');
+        setCargando(false);
+        return; 
+      }
     }
+
+    // ... resto del código sin cambios ...
 
     try {
       if (activeTab === 'signup') {
