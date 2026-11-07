@@ -62,22 +62,30 @@ export default function Catalog() {
       setCargando(true);
       setError(null);
       try {
-        // 🟢 Consulta directa a Supabase (remplazando llamadas a Railway)
-        const [resProductos, resEstablecimientos] = await Promise.all([
-          supabase.from('productos').select('*'),
+        // Consulta relacional a inventarios, piezas y establecimientos
+        const [resInventario, resEstablecimientos] = await Promise.all([
+          supabase.from('inventarios').select(`
+            *,
+            piezas (*),
+            establecimientos (*)
+          `).order('created_at', { ascending: false }),
           supabase.from('establecimientos').select('*')
         ]);
 
-        if (resProductos.error) throw resProductos.error;
+        if (resInventario.error) throw resInventario.error;
         if (resEstablecimientos.error) throw resEstablecimientos.error;
 
-        const dataProductos = resProductos.data || [];
         const dataEstablecimientos = resEstablecimientos.data || [];
 
-        // Cruzamos la información del producto con los datos del establecimiento / tienda
-        const inventarioCompleto = dataProductos.map(item => {
-          const tienda = dataEstablecimientos.find(t => t.id === item.establecimiento_id || t.id === item.sucursal_id);
-          return { ...item, tiendaInfo: tienda };
+        // Normalizar la pieza y la tienda asignada
+        const inventarioCompleto = (resInventario.data || []).map(item => {
+          const piezaObj = Array.isArray(item.piezas) ? item.piezas[0] : (item.piezas || {});
+          const tiendaObj = Array.isArray(item.establecimientos) ? item.establecimientos[0] : (item.establecimientos || {});
+          return { 
+            ...item, 
+            pieza: piezaObj,
+            tiendaInfo: tiendaObj 
+          };
         });
 
         setProductos(inventarioCompleto);
@@ -136,14 +144,13 @@ export default function Catalog() {
   // --- FILTROS INTELIGENTES ---
   const productosFiltrados = useMemo(() => {
     let filtrados = productos.filter(item => {
-      // Compatibilidad de estructura (directo de Supabase o dentro de objeto pieza)
       const nombreComercial = item.nombre || item.pieza?.nombre_comercial || '';
       const marcaFab = item.marca || item.pieza?.marca || '';
       const marcaVeh = item.marca_vehiculo || item.pieza?.marca_vehiculo || '';
       const modeloVeh = item.modelo || item.pieza?.modelo || '';
       const numParte = item.numero_parte || item.pieza?.numero_parte || '';
       const catItem = item.categoria || item.pieza?.categoria || '';
-      const precioItem = item.precio || item.precio_oferta || 0;
+      const precioItem = item.precio_oferta || item.precio || item.precio_lista || 0;
       const activoItem = item.activo !== false && item.pieza?.activo !== false;
 
       if (!activoItem) return false;
@@ -169,9 +176,9 @@ export default function Catalog() {
     });
 
     if (orden === 'menor') {
-      filtrados.sort((a, b) => (a.precio || a.precio_oferta || 0) - (b.precio || b.precio_oferta || 0));
+      filtrados.sort((a, b) => (a.precio_oferta || a.precio || 0) - (b.precio_oferta || b.precio || 0));
     } else if (orden === 'mayor') {
-      filtrados.sort((a, b) => (b.precio || b.precio_oferta || 0) - (a.precio || a.precio_oferta || 0));
+      filtrados.sort((a, b) => (b.precio_oferta || b.precio || 0) - (a.precio_oferta || a.precio || 0));
     }
 
     return filtrados;
@@ -429,8 +436,8 @@ export default function Catalog() {
               <div className="flex flex-col lg:flex-row gap-6">
                 {listaComparacion.map((item) => {
                   const nombre = item.nombre || item.pieza?.nombre_comercial || 'Pieza';
-                  const precio = item.precio || item.precio_oferta || 0;
-                  const imagen = item.imagen_url || item.pieza?.imagen_url;
+                  const precio = item.precio_oferta || item.precio || item.precio_lista || 0;
+                  const imagen = item.pieza?.imagen_url || item.imagen_url;
                   const marca = item.marca || item.pieza?.marca || 'N/A';
                   const marcaVeh = item.marca_vehiculo || item.pieza?.marca_vehiculo || '';
                   const modeloVeh = item.modelo || item.pieza?.modelo || '';

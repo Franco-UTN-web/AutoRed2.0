@@ -35,19 +35,24 @@ export default function Home() {
         setRolUsuario('invitado');
       }
 
-      // 2. Obtener productos e inventario desde Supabase
+      // 2. Obtener productos de recién llegados desde la tabla 'inventarios'
       try {
         const { data: dataProductos, error: errProductos } = await supabase
-          .from('productos')
+          .from('inventarios')
           .select(`
             *,
-            pieza:piezas(*)
-          `);
+            piezas (*)
+          `)
+          .order('created_at', { ascending: false });
 
-        if (errProductos) console.error("Error cargando productos de Supabase:", errProductos.message);
+        if (errProductos) console.error("Error cargando inventarios de Supabase:", errProductos.message);
 
         if (dataProductos && dataProductos.length > 0) {
-          setDestacados(dataProductos.slice(0, 3));
+          const productosNormalizados = dataProductos.map(item => ({
+            ...item,
+            pieza: Array.isArray(item.piezas) ? item.piezas[0] : (item.piezas || {})
+          }));
+          setDestacados(productosNormalizados.slice(0, 3));
         }
 
         // 3. Obtener sucursales aprobadas desde la tabla 'establecimientos'
@@ -177,27 +182,37 @@ export default function Home() {
                </div>
             ) : (
               destacados.map(item => {
-                const precioMostrar = item.precio_oferta || item.precio || 0;
+                const precioMostrar = item.precio_oferta || item.precio || item.precio_lista || 0;
 
                 return (
                   <div key={item.id} className="bg-white border border-gray-200 rounded-2xl flex flex-col hover:shadow-xl hover:border-gray-300 transition-all duration-300 group overflow-hidden">
                     
-                    {/* Imagen de la Tarjeta */}
+                    {/* Imagen de la Tarjeta con fallback defensivo */}
                     <div className="w-full h-48 bg-gray-50 p-6 flex items-center justify-center border-b border-gray-100 relative overflow-hidden">
                       <span className="absolute top-3 left-3 bg-white/90 backdrop-blur text-gray-900 text-[10px] font-black px-2 py-1 rounded shadow-sm uppercase tracking-wider z-10 border border-gray-200">
                         {item.pieza?.categoria || 'Refacción'}
                       </span>
                       {item.pieza?.imagen_url ? (
-                        <img src={item.pieza.imagen_url} className="max-h-full object-contain group-hover:scale-110 transition-transform duration-500" alt={item.pieza?.nombre_comercial} />
-                      ) : (
-                        <span className="text-4xl font-black text-gray-200 opacity-50">{item.pieza?.nombre_comercial?.charAt(0) || 'P'}</span>
-                      )}
+                        <img 
+                          src={item.pieza.imagen_url} 
+                          className="max-h-full object-contain group-hover:scale-110 transition-transform duration-500" 
+                          alt={item.pieza?.nombre_comercial} 
+                          onError={(e) => {
+                            e.target.onerror = null;
+                            e.target.style.display = 'none';
+                            e.target.nextSibling.style.display = 'flex';
+                          }}
+                        />
+                      ) : null}
+                      <div className={`w-16 h-16 rounded-lg bg-gray-100 items-center justify-center text-gray-300 font-black text-2xl ${item.pieza?.imagen_url ? 'hidden' : 'flex'}`}>
+                        {item.pieza?.nombre_comercial?.charAt(0) || 'P'}
+                      </div>
                     </div>
                     
                     {/* Info de la Tarjeta */}
                     <div className="p-5 flex flex-col flex-1">
                       <div className="mb-auto">
-                        <p className="text-xs text-gray-400 font-bold mb-1 uppercase tracking-wider">{item.pieza?.marca || 'Generico'}</p>
+                        <p className="text-xs text-gray-400 font-bold mb-1 uppercase tracking-wider">{item.pieza?.marca || 'Genérico'}</p>
                         <h4 className="text-lg font-black text-gray-900 leading-tight mb-2 line-clamp-2">{item.pieza?.nombre_comercial || 'Pieza Automotriz'}</h4>
                         <p className="text-xs text-gray-500 font-medium bg-gray-50 inline-block px-2 py-1 rounded border border-gray-100">
                           Aplica para: <span className="font-bold text-gray-700">{item.pieza?.marca_vehiculo || 'Universal'}</span>
