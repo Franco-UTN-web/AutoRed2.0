@@ -1,6 +1,8 @@
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import RolesPanel from './pages/RolesPanel';
 import { useEffect } from 'react';
 import { supabase } from './supabase'; // Asegúrate de ajustar esta ruta si tu cliente está en otra carpeta
+
 
 import Navbar from './components/Navbar';
 import ChatWindow from './components/ChatWindow';
@@ -131,6 +133,7 @@ useEffect(() => {
             <Route path="/directorio" element={<DirectorioSucursales />} />
             <Route path="/actualizar-password" element={<UpdatePassword />} />
             <Route path="/recuperar-password" element={<RecuperarPassword />} />
+            <Route path="/admin" element={<RolesPanel />} />
             
             <Route path="/dashboard/customer" element={
               <ProtectedRoute allowedRoles={['comprador']}>

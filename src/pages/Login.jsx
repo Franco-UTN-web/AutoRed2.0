@@ -58,6 +58,17 @@ export default function Login() {
           throw new Error('Este correo ya está registrado en AutoRed. Por favor, cambia a "Iniciar Sesión" o recupera tu contraseña.');
         }
 
+        // Crear la fila inicial en la tabla 'perfiles' de Supabase
+        if (data?.user) {
+          await supabase.from('perfiles').upsert({
+            id: data.user.id,
+            nombre: fullName,
+            email: email,
+            rol: 'comprador',
+            activo: true
+          });
+        }
+
         setActiveTab('login');
         setErrorMsg('¡Cuenta creada! Revisa tu correo (y la carpeta SPAM) para verificar tu cuenta antes de iniciar sesión.');
         setEmail('');
@@ -65,6 +76,7 @@ export default function Login() {
         setFullName('');
 
       } else {
+        // 🟢 INICIAR SESIÓN DIRECTO CON SUPABASE
         const { data, error } = await supabase.auth.signInWithPassword({
           email: email,
           password: password,
@@ -72,37 +84,48 @@ export default function Login() {
 
         if (error) throw new Error('Credenciales incorrectas o correo sin verificar.');
 
-        const syncResponse = await fetch('https://backautored-production.up.railway.app/api/login/sync', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            id: data.user.id,
-            email: data.user.email,
-            nombre: data.user.user_metadata?.nombre || 'Usuario'
-          })
-        });
+        // 🟢 CONSULTAR EL ROL DIRECTO DESDE LA TABLA PERFILES DE SUPABASE
+        const { data: perfil, error: perfilError } = await supabase
+          .from('perfiles')
+          .select('rol, activo, nombre')
+          .eq('id', data.user.id)
+          .maybeSingle();
 
-        if (!syncResponse.ok) throw new Error('Error al sincronizar con el servidor central.');
-        
-        const syncData = await syncResponse.json();
-        
-        if (syncData.activo === 'false' || syncData.activo === false) {
+        if (perfilError) {
+          console.warn("Error leyendo perfil de Supabase:", perfilError.message);
+        }
+
+        // Verificar si la cuenta está activa
+        if (perfil && perfil.activo === false) {
           await supabase.auth.signOut();
           throw new Error('Acceso denegado: Tu cuenta ha sido suspendida por un administrador.');
         }
 
-        data.user.user_metadata = {
-          ...data.user.user_metadata,
-          role: syncData.rol, 
-          nombre: syncData.nombre
+        const rolDetectado = perfil?.rol || data.user.user_metadata?.role || 'comprador';
+        const nombreDetectado = perfil?.nombre || data.user.user_metadata?.nombre || 'Usuario';
+
+        // Guardar metadata local
+        const userActualizado = {
+          ...data.user,
+          rol: rolDetectado,
+          user_metadata: {
+            ...data.user.user_metadata,
+            role: rolDetectado,
+            nombre: nombreDetectado
+          }
         };
 
         localStorage.setItem('session_token', data.session.access_token);
-        localStorage.setItem('user_data', JSON.stringify(data.user));
+        localStorage.setItem('user_data', JSON.stringify(userActualizado));
 
-        if (syncData.rol === 'tienda') navigate('/dashboard/store');
-        else if (syncData.rol === 'admin') navigate('/dashboard/admin');
-        else navigate('/dashboard/customer');
+        // 🟢 REDIRECCIÓN SEGÚN ROL SIN SALIRSE DE LOCALHOST
+        if (rolDetectado === 'admin' || rolDetectado === 'administrador') {
+          navigate('/dashboard/admin');
+        } else if (rolDetectado === 'tienda') {
+          navigate('/dashboard/store');
+        } else {
+          navigate('/dashboard/customer');
+        }
       }
       
     } catch (error) {
@@ -113,9 +136,10 @@ export default function Login() {
   };
 
   const handleGoogleLogin = async () => {
+    // 🟢 REDIRECCIÓN DINÁMICA: Si estás en localhost vuelve a localhost, si estás en Vercel vuelve a Vercel
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
-      options: { redirectTo: 'https://auto-red2-0.vercel.app' }
+      options: { redirectTo: `${window.location.origin}/inicio` }
     });
     if (error) setErrorMsg(error.message);
   };
@@ -258,7 +282,6 @@ export default function Login() {
                   <input type="checkbox" id="remember" className="w-4 h-4 rounded border-gray-300 text-autoblue focus:ring-autoblue" />
                   <label htmlFor="remember" className="text-xs text-gray-500 font-bold cursor-pointer">Recordarme</label>
                 </div>
-                {/* 🔥 AQUI ESTÁ EL CAMBIO: Ahora navega a la nueva vista 🔥 */}
                 <button 
                   type="button" 
                   onClick={() => navigate('/recuperar-password')}

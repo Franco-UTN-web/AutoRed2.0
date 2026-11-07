@@ -1,34 +1,63 @@
 import { useState, useEffect } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { Home, Info, MapPin, Package, Store, LogOut, LayoutDashboard, User, LogIn, Menu, X } from 'lucide-react';
+import { Home, MapPin, Package, Store, LogOut, LayoutDashboard, User, LogIn, Menu, X } from 'lucide-react';
+import { supabase } from '@/supabase';
 
 export default function Navbar() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [rol, setRol] = useState(null);
   const navigate = useNavigate();
-  const location = useLocation(); // Escucha los cambios de ruta y la carga inicial
+  const location = useLocation();
 
-  // 1. Lectura reactiva de la sesión desde localStorage
+  // 1. Lectura reactiva de la sesión desde Supabase y localStorage
   useEffect(() => {
+    obtenerRolUsuario();
+  }, [location]);
+
+  const obtenerRolUsuario = async () => {
     try {
-      const datosUsuarioJson = localStorage.getItem('user_data');
-      if (datosUsuarioJson && datosUsuarioJson !== "undefined") {
-        const usuarioLogueado = JSON.parse(datosUsuarioJson);
-        setRol(usuarioLogueado?.user_metadata?.role || 'comprador');
+      // Intentar obtener usuario autenticado desde Supabase Auth
+      const { data: { user } } = await supabase.auth.getUser();
+
+      console.log("1. Usuario autenticado en Auth:", user?.email, "ID:", user?.id);
+
+      if (user) {
+        // Consultar el rol en la tabla perfiles de Supabase
+        const { data: perfil } = await supabase
+          .from('perfiles')
+          .select('rol')
+          .eq('id', user.id)
+          .maybeSingle();
+
+        console.log("2. Respuesta de la consulta a perfiles:", perfil, "Error:", error);
+
+        const rolFinal = perfil?.rol || user?.user_metadata?.role || user?.user_metadata?.rol || 'comprador';
+
+        console.log("3. Rol final detectado:", rolFinal);
+
+        setRol(rolFinal);
       } else {
-        setRol(null);
+        // Fallback si la sesión está en localStorage
+        const datosUsuarioJson = localStorage.getItem('user_data');
+        if (datosUsuarioJson && datosUsuarioJson !== "undefined") {
+          const usuarioLogueado = JSON.parse(datosUsuarioJson);
+          const rolLocal = usuarioLogueado?.rol || usuarioLogueado?.user_metadata?.role || 'comprador';
+          setRol(rolLocal);
+        } else {
+          setRol(null);
+        }
       }
     } catch (error) {
-      console.warn("Sesión corrupta detectada en el Navbar.");
+      console.warn("Error consultando sesión/rol en Navbar:", error);
       setRol(null);
     }
-  }, [location]);
+  };
 
   // 2. Lógica Dinámica de Navegación
   const handleAccionPrincipal = () => {
     setIsMenuOpen(false); 
     if (rol === 'tienda') navigate('/dashboard/store');
-    else if (rol === 'admin') navigate('/dashboard/admin');
+    else if (rol === 'admin' || rol === 'administrador') navigate('/dashboard/admin'); // Redirige a tu panel de Admin
     else if (rol === 'comprador') navigate('/dashboard/customer'); 
     else navigate('/login'); 
   };
@@ -36,16 +65,23 @@ export default function Navbar() {
   // 3. Textos e Íconos dinámicos para el botón principal
   const obtenerTextoBoton = () => {
     if (rol === 'tienda') return 'Mi Mostrador';
-    if (rol === 'admin') return 'Panel de Control';
+    if (rol === 'admin' || rol === 'administrador') return 'Panel de Control';
     if (rol === 'comprador') return 'Mi Cuenta';
     return 'Ingresar';
   };
 
   const IconoBoton = () => {
     if (rol === 'tienda') return <Store size={18} />;
-    if (rol === 'admin') return <LayoutDashboard size={18} />;
+    if (rol === 'admin' || rol === 'administrador') return <LayoutDashboard size={18} />;
     if (rol === 'comprador') return <User size={18} />;
     return <LogIn size={18} />;
+  };
+
+  const handleCerrarSesion = async () => {
+    await supabase.auth.signOut();
+    localStorage.clear();
+    setRol(null);
+    navigate('/login');
   };
 
   return (
@@ -88,7 +124,7 @@ export default function Navbar() {
                   {/* Decoración de fondo */}
                   <div className="absolute -top-10 -right-10 w-32 h-32 bg-blue-50 rounded-full blur-2xl opacity-50 pointer-events-none"></div>
 
-                  {/* Columna 1: Categorías del Sistema */}
+                  {/* Columna 1: Categorías */}
                   <div className="relative z-10">
                     <h4 className="text-autoblue font-black text-sm uppercase tracking-wider mb-4 flex items-center gap-2">
                       <div className="w-2 h-2 bg-autored rounded-full"></div> Sistemas
@@ -116,7 +152,7 @@ export default function Navbar() {
                     </ul>
                   </div>
 
-                  {/* Columna 3: Destacado / Promoción */}
+                  {/* Columna 3: Oferta */}
                   <div className="bg-gray-50 -my-6 -mr-6 p-6 border-l border-gray-100 flex flex-col justify-center relative z-10">
                     <span className="bg-autored text-white text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded w-max mb-3">Oferta del mes</span>
                     <h4 className="text-gray-900 font-black mb-2 leading-tight">Kits de Afinación</h4>
@@ -143,10 +179,7 @@ export default function Navbar() {
             {/* BOTÓN CERRAR SESIÓN */}
             {rol && (
                <button 
-                 onClick={() => {
-                   localStorage.clear();
-                   window.location.href = '/login';
-                 }}
+                 onClick={handleCerrarSesion}
                  title="Cerrar Sesión"
                  className="flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-red-50 p-2.5 rounded-xl transition-all ml-1"
                >
@@ -196,10 +229,7 @@ export default function Navbar() {
 
             {rol && (
                <button 
-                 onClick={() => {
-                   localStorage.clear();
-                   navigate('/login');
-                 }}
+                 onClick={handleCerrarSesion}
                  className="flex items-center justify-center gap-2 w-full text-red-600 bg-red-50 hover:bg-red-100 px-4 py-3.5 rounded-xl font-bold transition-colors mt-2"
                >
                  <LogOut size={20} /> Cerrar Sesión
