@@ -83,17 +83,17 @@ export default function StoreDashboard() {
         setMiEstablecimiento(tienda);
         setFormData(prev => ({ ...prev, establecimiento_id: tienda.id }));
 
-        // 2. Cargar inventario local, global y cotizaciones en paralelo desde Supabase
+        // 2. Cargar inventario local, global y cotizaciones desde Supabase usando la tabla 'inventarios'
         const [localRes, globalRes, cotRes] = await Promise.all([
           supabase
-            .from('productos')
+            .from('inventarios')
             .select(`
               *,
               pieza:piezas(*)
             `)
             .eq('establecimiento_id', tienda.id),
           supabase
-            .from('productos')
+            .from('inventarios')
             .select(`
               *,
               pieza:piezas(*),
@@ -170,7 +170,7 @@ export default function StoreDashboard() {
     setModalEliminar({ visible: false, idProducto: null });
     try {
       const { error } = await supabase
-        .from('productos')
+        .from('inventarios')
         .delete()
         .eq('id', id);
 
@@ -245,9 +245,9 @@ export default function StoreDashboard() {
           if (errPieza) throw errPieza;
         }
 
-        // 2. Actualizar datos en la tabla productos
+        // 2. Actualizar datos en la tabla inventarios
         const { error: errProd } = await supabase
-          .from('productos')
+          .from('inventarios')
           .update({
             stock: formData.stock,
             precio_lista: formData.precio_lista,
@@ -283,9 +283,9 @@ export default function StoreDashboard() {
 
         if (errPieza) throw errPieza;
 
-        // 2. Crear relación en la tabla productos
+        // 2. Crear relación en la tabla inventarios
         const { error: errProd } = await supabase
-          .from('productos')
+          .from('inventarios')
           .insert([{
             establecimiento_id: miEstablecimiento.id,
             pieza_id: nuevaPieza.id,
