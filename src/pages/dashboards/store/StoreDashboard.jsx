@@ -41,6 +41,7 @@ export default function StoreDashboard() {
   const [showForm, setShowForm] = useState(false);
   const [inventarioLocal, setInventarioLocal] = useState([]);
   const [inventarioGlobal, setInventarioGlobal] = useState([]);
+  const [cotizaciones, setCotizaciones] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [imagenSeleccionada, setImagenSeleccionada] = useState(null);
   const [idEdicion, setIdEdicion] = useState(null);
@@ -82,8 +83,8 @@ export default function StoreDashboard() {
         setMiEstablecimiento(tienda);
         setFormData(prev => ({ ...prev, establecimiento_id: tienda.id }));
 
-        // 2. Cargar inventario local y global en paralelo desde Supabase
-        const [localRes, globalRes] = await Promise.all([
+        // 2. Cargar inventario local, global y cotizaciones en paralelo desde Supabase
+        const [localRes, globalRes, cotRes] = await Promise.all([
           supabase
             .from('productos')
             .select(`
@@ -97,7 +98,11 @@ export default function StoreDashboard() {
               *,
               pieza:piezas(*),
               establecimiento:establecimientos(*)
-            `)
+            `),
+          supabase
+            .from('cotizaciones')
+            .select('*')
+            .eq('establecimiento_id', tienda.id)
         ]);
 
         if (localRes.error) console.error("Error inventario local:", localRes.error);
@@ -105,6 +110,9 @@ export default function StoreDashboard() {
 
         if (globalRes.error) console.error("Error inventario global:", globalRes.error);
         else setInventarioGlobal(globalRes.data || []);
+
+        if (cotRes.error) console.warn("Tabla cotizaciones no configurada o vacía:", cotRes.error.message);
+        else setCotizaciones(cotRes.data || []);
       }
     } catch (error) {
       console.error("Error al inicializar panel:", error);
@@ -327,16 +335,65 @@ export default function StoreDashboard() {
 
         {/* PESTAÑAS */}
         <div className="flex border-b border-gray-200 mb-6 gap-4 overflow-x-auto">
-          <button onClick={() => setActiveTab('orders')} className={`py-3 px-4 text-sm font-bold border-b-2 whitespace-nowrap ${activeTab === 'orders' ? 'border-autoblue text-autoblue' : 'border-transparent text-gray-500'}`}>
-            Cotizaciones Entrantes
+          <button onClick={() => setActiveTab('orders')} className={`py-3 px-4 text-sm font-bold border-b-2 whitespace-nowrap cursor-pointer ${activeTab === 'orders' ? 'border-autoblue text-autoblue' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+            Cotizaciones Entrantes ({cotizaciones.length})
           </button>
-          <button onClick={() => setActiveTab('catalog')} className={`py-3 px-4 text-sm font-bold border-b-2 whitespace-nowrap ${activeTab === 'catalog' ? 'border-autoblue text-autoblue' : 'border-transparent text-gray-500'}`}>
-            Mi Inventario Local
+          <button onClick={() => setActiveTab('catalog')} className={`py-3 px-4 text-sm font-bold border-b-2 whitespace-nowrap cursor-pointer ${activeTab === 'catalog' ? 'border-autoblue text-autoblue' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+            Mi Inventario Local ({inventarioLocal.length})
           </button>
-          <button onClick={() => setActiveTab('global')} className={`py-3 px-4 text-sm font-bold border-b-2 whitespace-nowrap ${activeTab === 'global' ? 'border-autoblue text-autoblue' : 'border-transparent text-gray-500'}`}>
+          <button onClick={() => setActiveTab('global')} className={`py-3 px-4 text-sm font-bold border-b-2 whitespace-nowrap cursor-pointer ${activeTab === 'global' ? 'border-autoblue text-autoblue' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
             Explorar Competencia
           </button>
         </div>
+
+        {/* CONTENIDO PRINCIPAL: COTIZACIONES ENTRANTES */}
+        {activeTab === 'orders' && (
+          <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm animate-fade-in">
+            <h3 className="font-bold text-lg text-gray-900 mb-1">Cotizaciones Entrantes</h3>
+            <p className="text-sm text-gray-500 mb-6 font-medium">
+              Solicitudes de presupuesto enviadas por clientes y talleres de la red.
+            </p>
+
+            {cotizaciones.length === 0 ? (
+              <div className="p-12 text-center text-gray-500 border-2 border-dashed border-gray-200 rounded-xl bg-gray-50">
+                <svg className="w-12 h-12 text-gray-300 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
+                </svg>
+                <h4 className="font-bold text-gray-800 text-base mb-1">No tienes cotizaciones pendientes</h4>
+                <p className="text-xs text-gray-400 max-w-sm mx-auto">
+                  Las solicitudes de refacciones enviadas por los compradores de tu zona aparecerán aquí automáticamente.
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-gray-50 text-gray-500 font-bold text-xs uppercase border-b border-gray-200">
+                    <tr>
+                      <th className="p-4">Cliente</th>
+                      <th className="p-4">Refacción Solicitada</th>
+                      <th className="p-4">Vehículo</th>
+                      <th className="p-4 text-right">Acción</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {cotizaciones.map((cot) => (
+                      <tr key={cot.id} className="hover:bg-gray-50">
+                        <td className="p-4 font-bold text-gray-900">{cot.cliente_nombre || 'Comprador AutoRed'}</td>
+                        <td className="p-4 text-gray-700">{cot.pieza_nombre || 'Sin especificar'}</td>
+                        <td className="p-4 text-gray-500">{cot.vehiculo || 'N/A'}</td>
+                        <td className="p-4 text-right">
+                          <button className="bg-autoblue hover:bg-blue-900 text-white font-bold px-4 py-2 rounded-lg text-xs transition-colors">
+                            Responder
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* CONTENIDO PRINCIPAL: INVENTARIO LOCAL */}
         {activeTab === 'catalog' && (
@@ -346,7 +403,7 @@ export default function StoreDashboard() {
               <button onClick={() => {
                 setShowForm(!showForm);
                 if(showForm) setIdEdicion(null);
-              }} className={`border-2 px-4 py-2 rounded-lg font-bold text-sm flex items-center gap-2 ${showForm ? 'border-gray-300 text-gray-500' : 'border-autoblue text-autoblue'}`}>
+              }} className={`border-2 px-4 py-2 rounded-lg font-bold text-sm flex items-center gap-2 cursor-pointer ${showForm ? 'border-gray-300 text-gray-500' : 'border-autoblue text-autoblue hover:bg-blue-50'}`}>
                 {showForm ? 'Cancelar' : '+ Agregar Nueva Pieza'}
               </button>
             </div>
@@ -488,7 +545,7 @@ export default function StoreDashboard() {
                 </div>
 
                 <div className="flex justify-end pt-4 border-t">
-                  <button type="submit" className="bg-autoblue hover:bg-blue-900 text-white font-bold px-6 py-2.5 rounded-lg text-sm transition-colors">
+                  <button type="submit" className="bg-autoblue hover:bg-blue-900 text-white font-bold px-6 py-2.5 rounded-lg text-sm transition-colors cursor-pointer">
                     {idEdicion ? 'Actualizar Producto en BD' : 'Sincronizar a Base de Datos'}
                   </button>
                 </div>
@@ -540,10 +597,10 @@ export default function StoreDashboard() {
                         <p className="font-black text-red-600 text-lg">${item.precio_oferta}</p>
                       </div>
                       <div className="flex gap-2">
-                        <button onClick={() => cargarDatosParaEdicion(item)} className="text-blue-600 bg-white border border-gray-200 hover:bg-blue-50 font-bold px-3 py-1.5 rounded-lg text-xs transition-colors flex items-center gap-1">
+                        <button onClick={() => cargarDatosParaEdicion(item)} className="text-blue-600 bg-white border border-gray-200 hover:bg-blue-50 font-bold px-3 py-1.5 rounded-lg text-xs transition-colors flex items-center gap-1 cursor-pointer">
                           Editar
                         </button>
-                        <button onClick={() => confirmarEliminacion(item.id)} className="text-red-600 bg-white border border-gray-200 hover:bg-red-50 font-bold px-3 py-1.5 rounded-lg text-xs transition-colors flex items-center gap-1">
+                        <button onClick={() => confirmarEliminacion(item.id)} className="text-red-600 bg-white border border-gray-200 hover:bg-red-50 font-bold px-3 py-1.5 rounded-lg text-xs transition-colors flex items-center gap-1 cursor-pointer">
                           Eliminar
                         </button>
                       </div>
@@ -601,7 +658,7 @@ export default function StoreDashboard() {
                         {esMia ? (
                           <button 
                             onClick={() => { setActiveTab('catalog'); cargarDatosParaEdicion(item); }} 
-                            className="text-autoblue bg-white border border-autoblue hover:bg-blue-100 font-bold px-3 py-1.5 rounded-lg text-xs transition-colors"
+                            className="text-autoblue bg-white border border-autoblue hover:bg-blue-100 font-bold px-3 py-1.5 rounded-lg text-xs transition-colors cursor-pointer"
                           >
                             Editar Mi Pieza
                           </button>
