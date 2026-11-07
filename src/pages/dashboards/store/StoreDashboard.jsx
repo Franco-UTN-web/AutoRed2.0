@@ -292,11 +292,15 @@ const inicializarPanel = async () => {
 
         mostrarNotificacion("¡Producto actualizado correctamente!");
       } else {
-        // ALTA DE NUEVO PRODUCTO
+        // ALTA DE NUEVO PRODUCTO CON UUIDs GARANTIZADOS
+        const nuevoPiezaId = crypto.randomUUID();
+        const nuevoInventarioId = crypto.randomUUID();
+
         // 1. Crear registro en la tabla piezas
-        const { data: nuevaPieza, error: errPieza } = await supabase
+        const { error: errPieza } = await supabase
           .from('piezas')
           .insert([{
+            id: nuevoPiezaId,
             categoria: formData.categoria,
             marca: formData.marca,
             nombre_comercial: formData.nombre_comercial,
@@ -310,9 +314,7 @@ const inicializarPanel = async () => {
             numero_parte: formData.numero_parte,
             condicion: formData.condicion,
             garantia: formData.garantia
-          }])
-          .select()
-          .single();
+          }]);
 
         if (errPieza) throw errPieza;
 
@@ -320,11 +322,12 @@ const inicializarPanel = async () => {
         const { error: errProd } = await supabase
           .from('inventarios')
           .insert([{
+            id: nuevoInventarioId,
             establecimiento_id: miEstablecimiento.id,
-            pieza_id: nuevaPieza.id,
-            stock: formData.stock,
-            precio_lista: formData.precio_lista,
-            precio_oferta: formData.precio_oferta
+            pieza_id: nuevoPiezaId,
+            stock: parseInt(formData.stock, 10),
+            precio_lista: parseFloat(formData.precio_lista),
+            precio_oferta: parseFloat(formData.precio_oferta)
           }]);
 
         if (errProd) throw errProd;
