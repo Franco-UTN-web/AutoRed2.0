@@ -66,56 +66,89 @@ export default function StoreDashboard() {
     setTimeout(() => setNotificacion({ visible: false, mensaje: '', tipo: 'exito' }), 3500);
   };
 
-  const inicializarPanel = async () => {
-    if (!usuarioLogueado) return;
+const inicializarPanel = async () => {
     setCargando(true);
     try {
-      // 1. Obtener establecimiento del usuario
+      // 1. Obtener usuario directamente desde la sesión activa de Supabase
+      const { data: { user } } = await supabase.auth.getUser();
+
+      let currentUserId = user?.id;
+      if (!currentUserId && usuarioLogueado) {
+        currentUserId = usuarioLogueado.id || usuarioLogueado.user_id;
+      }
+
+      if (!currentUserId) {
+        setCargando(false);
+        return;
+      }
+
+      // 2. Obtener el establecimiento del propietario activo
       const { data: tienda, error: errTienda } = await supabase
         .from('establecimientos')
         .select('*')
-        .eq('propietario_id', usuarioLogueado.id)
+        .eq('propietario_id', currentUserId)
         .maybeSingle();
 
-      if (errTienda) throw errTienda;
+      if (errTienda) console.error("Error obteniendo establecimiento:", errTienda.message);
 
       if (tienda) {
         setMiEstablecimiento(tienda);
         setFormData(prev => ({ ...prev, establecimiento_id: tienda.id }));
 
-        // 2. Cargar inventario local, global y cotizaciones desde Supabase usando la tabla 'inventarios'
-        const [localRes, globalRes, cotRes] = await Promise.all([
-          supabase
+        // 3. Cargar inventario local con fallback defensivo
+        const { data: localData, error: localErr } = await supabase
+          .from('inventarios')
+          .select(`
+            *,
+            piezas (*)
+          `)
+          .eq('establecimiento_id', tienda.id);
+
+        if (localErr) {
+          console.warn("Error en join de inventario local, ejecutando consulta de respaldo:", localErr.message);
+          const { data: fallbackData } = await supabase
             .from('inventarios')
-            .select(`
-              *,
-              pieza:piezas(*)
-            `)
-            .eq('establecimiento_id', tienda.id),
-          supabase
-            .from('inventarios')
-            .select(`
-              *,
-              pieza:piezas(*),
-              establecimiento:establecimientos(*)
-            `),
-          supabase
-            .from('cotizaciones')
             .select('*')
-            .eq('establecimiento_id', tienda.id)
-        ]);
+            .eq('establecimiento_id', tienda.id);
+            
+          setInventarioLocal(fallbackData || []);
+        } else {
+          // Normalizar el objeto pieza para la interfaz
+          const inventarioNormalizado = (localData || []).map(item => ({
+            ...item,
+            pieza: Array.isArray(item.piezas) ? item.piezas[0] : (item.piezas || item.pieza || {})
+          }));
+          setInventarioLocal(inventarioNormalizado);
+        }
 
-        if (localRes.error) console.error("Error inventario local:", localRes.error);
-        else setInventarioLocal(localRes.data || []);
+        // 4. Cargar inventario global
+        const { data: globalData } = await supabase
+          .from('inventarios')
+          .select(`
+            *,
+            piezas (*),
+            establecimientos (*)
+          `);
 
-        if (globalRes.error) console.error("Error inventario global:", globalRes.error);
-        else setInventarioGlobal(globalRes.data || []);
+        if (globalData) {
+          const globalNormalizado = globalData.map(item => ({
+            ...item,
+            pieza: Array.isArray(item.piezas) ? item.piezas[0] : (item.piezas || item.pieza || {}),
+            establecimiento: Array.isArray(item.establecimientos) ? item.establecimientos[0] : (item.establecimientos || item.establecimiento || {})
+          }));
+          setInventarioGlobal(globalNormalizado);
+        }
 
-        if (cotRes.error) console.warn("Tabla cotizaciones no configurada o vacía:", cotRes.error.message);
-        else setCotizaciones(cotRes.data || []);
+        // 5. Cargar cotizaciones
+        const { data: cotRes } = await supabase
+          .from('cotizaciones')
+          .select('*')
+          .eq('establecimiento_id', tienda.id);
+
+        setCotizaciones(cotRes || []);
       }
     } catch (error) {
-      console.error("Error al inicializar panel:", error);
+      console.error("Error al inicializar panel de mostrador:", error);
       mostrarNotificacion("Error al conectar con Supabase", "error");
     } finally {
       setCargando(false);
