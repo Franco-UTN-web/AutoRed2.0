@@ -58,7 +58,7 @@ export default function AdminDashboard() {
     setModalConfirm({ visible: true, id, accion, nombreTienda: nombre });
   };
 
-const ejecutarAccion = async () => {
+  const ejecutarAccion = async () => {
     const { id, accion } = modalConfirm;
     setModalConfirm({ visible: false, id: null, accion: '', nombreTienda: '' });
     
@@ -82,12 +82,20 @@ const ejecutarAccion = async () => {
 
       if (error) throw error;
 
-      // 3. 🟢 ACTUALIZAR AUTOMÁTICAMENTE EL ROL A 'tienda' EN LA TABLA PERFILES
+      // 3. 🟢 ACTUALIZAR AUTOMÁTICAMENTE A 'tienda' SOLO SI EL PROPIETARIO NO ES ADMIN
       if ((accion === 'aprobar' || accion === 'reactivar') && tiendaProcesada?.propietario_id) {
-        await supabase
+        const { data: perfilPropietario } = await supabase
           .from('perfiles')
-          .update({ rol: 'tienda' })
-          .eq('id', tiendaProcesada.propietario_id);
+          .select('rol')
+          .eq('id', tiendaProcesada.propietario_id)
+          .maybeSingle();
+
+        if (perfilPropietario && perfilPropietario.rol !== 'admin' && perfilPropietario.rol !== 'administrador') {
+          await supabase
+            .from('perfiles')
+            .update({ rol: 'tienda' })
+            .eq('id', tiendaProcesada.propietario_id);
+        }
       }
 
       setTimeout(() => {
