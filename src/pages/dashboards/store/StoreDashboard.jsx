@@ -598,13 +598,28 @@ const inicializarPanel = async () => {
                 {inventarioLocal.map((item) => (
                   <div key={item.id} className="border border-gray-200 rounded-lg p-4 flex flex-col justify-between hover:border-autoblue transition-colors group bg-gray-100 shadow-sm">
                     <div className="flex gap-4">
+                      {/* Renderizado defensivo de la imagen */}
                       {item.pieza?.imagen_url ? (
-                        <img src={item.pieza.imagen_url} alt={item.pieza.nombre_comercial} className="w-16 h-16 object-cover rounded-lg border border-gray-100 bg-gray-50" />
-                      ) : (
-                        <div className="w-16 h-16 rounded-lg bg-white flex items-center justify-center text-gray-400 font-black text-xl border border-gray-200">
-                          {item.pieza?.nombre_comercial?.charAt(0)}
-                        </div>
-                      )}
+                        <img 
+                          src={item.pieza.imagen_url} 
+                          alt={item.pieza.nombre_comercial} 
+                          className="w-16 h-16 object-cover rounded-lg border border-gray-100 bg-gray-50"
+                          onError={(e) => {
+                            // Si la URL falla o da 403, oculta la imagen rota y muestra el recuadro por defecto
+                            e.target.onerror = null; 
+                            e.target.style.display = 'none';
+                            e.target.nextSibling.style.display = 'flex';
+                          }}
+                        />
+                      ) : null}
+
+                      {/* Recuadro de respaldo si no hay imagen o falla al cargar */}
+                      <div 
+                        className={`w-16 h-16 rounded-lg bg-white flex items-center justify-center text-gray-400 font-black text-xl border border-gray-200 ${item.pieza?.imagen_url ? 'hidden' : 'flex'}`}
+                      >
+                        {item.pieza?.nombre_comercial?.charAt(0) || 'P'}
+                      </div>
+
                       <div>
                         <p className="font-bold text-gray-900 text-sm leading-tight line-clamp-2 group-hover:text-autoblue transition-colors">{item.pieza?.nombre_comercial}</p>
                         <p className="text-gray-500 text-xs mt-1 font-medium">{item.pieza?.marca} {item.pieza?.modelo}</p>
