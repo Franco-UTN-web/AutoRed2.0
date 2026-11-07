@@ -4,26 +4,24 @@ import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 import { supabase } from '../supabase';
 
-// 🔧 PARCHE VITE: Arreglo para los íconos de Leaflet
 import icon from 'leaflet/dist/images/marker-icon.png';
 import iconShadow from 'leaflet/dist/images/marker-shadow.png';
 
-let DefaultIcon = L.icon({
+const DefaultIcon = L.icon({
   iconUrl: icon,
   shadowUrl: iconShadow,
   iconSize: [25, 41],
   iconAnchor: [12, 41]
 });
 L.Marker.prototype.options.icon = DefaultIcon;
-// ---------------------------------------------------------
 
-const centroPorDefecto = [19.4326, -99.1332]; // Coordenadas del centro de México
+const centroPorDefecto = [19.4326, -99.1332];
 
 function RecenterMap({ coordenadas, zoom }) {
   const map = useMap();
   useEffect(() => {
-    if (coordenadas && coordenadas[0] && coordenadas[1]) {
-      map.setView(coordenadas, zoom);
+    if (coordenadas && Array.isArray(coordenadas) && coordenadas[0] && coordenadas[1]) {
+      map.setView(coordenadas, zoom, { animate: true });
     }
   }, [coordenadas, zoom, map]);
   return null;
@@ -33,17 +31,14 @@ export default function DirectorioSucursales() {
   const [sucursales, setSucursales] = useState([]);
   const [cargando, setCargando] = useState(true);
   
-  // Estados para el Mapa
   const [mapCenter, setMapCenter] = useState(centroPorDefecto);
   const [tiendaSeleccionada, setTiendaSeleccionada] = useState(null);
-  const [coordenadasMarcador, setCoordenadasMarcador] = useState(null);
   const [alertaMapa, setAlertaMapa] = useState('');
 
   useEffect(() => {
     const fetchSucursales = async () => {
       setCargando(true);
       try {
-        // 🟢 Petición directa a la tabla establecimientos en Supabase
         const { data, error } = await supabase
           .from('establecimientos')
           .select('*');
@@ -51,7 +46,6 @@ export default function DirectorioSucursales() {
         if (error) throw error;
 
         if (data) {
-          // Filtramos establecimientos activos o aprobados (si existe la columna estado/activo)
           const activas = data.filter(tienda => 
             !tienda.estado || 
             tienda.estado === 'APROBADO' || 
@@ -60,7 +54,6 @@ export default function DirectorioSucursales() {
           );
           setSucursales(activas);
 
-          // Si hay al menos una tienda con coordenadas, centramos el mapa en la primera
           const primeraConCoords = activas.find(t => t.latitud && t.longitud);
           if (primeraConCoords) {
             setMapCenter([parseFloat(primeraConCoords.latitud), parseFloat(primeraConCoords.longitud)]);
@@ -78,17 +71,14 @@ export default function DirectorioSucursales() {
 
   const ubicarEnMapa = async (tienda) => {
     setTiendaSeleccionada(tienda);
-    setAlertaMapa(''); // Limpiamos alertas previas
+    setAlertaMapa('');
     
-    // 1. Usar coordenadas exactas de la base de datos de Supabase si existen
     if (tienda.latitud && tienda.longitud) {
       const coordsExactas = [parseFloat(tienda.latitud), parseFloat(tienda.longitud)];
       setMapCenter(coordsExactas);
-      setCoordenadasMarcador(coordsExactas);
       return;
     }
 
-    // 2. PLAN B: Nominatim (Búsqueda por dirección para sucursales antiguas)
     const calle = tienda.calle || '';
     const numero = tienda.numero || '';
     const colonia = tienda.colonia || '';
@@ -104,10 +94,7 @@ export default function DirectorioSucursales() {
       if (data && data.length > 0) {
         const lat = parseFloat(data[0].lat);
         const lng = parseFloat(data[0].lon);
-        const nuevasCoordenadas = [lat, lng];
-        
-        setMapCenter(nuevasCoordenadas);
-        setCoordenadasMarcador(nuevasCoordenadas);
+        setMapCenter([lat, lng]);
       } else {
         setAlertaMapa("📍 Tienda antigua sin pin exacto. Mostrando el mapa general.");
       }
@@ -128,7 +115,7 @@ export default function DirectorioSucursales() {
 
         <div className="flex flex-col lg:flex-row gap-6 lg:h-[75vh]">
           
-          {/* COLUMNA IZQUIERDA (LISTA DE SUCURSALES) */}
+          {/* SUCURSALES */}
           <div className="w-full lg:w-1/3 bg-white border border-gray-200 rounded-2xl shadow-sm flex flex-col overflow-hidden h-[400px] lg:h-full">
             <div className="p-4 border-b border-gray-100 bg-gray-50 shrink-0">
               <h3 className="font-black text-gray-900">Sucursales Activas ({sucursales.length})</h3>
@@ -171,31 +158,24 @@ export default function DirectorioSucursales() {
             </div>
           </div>
 
-          {/* COLUMNA DERECHA (MAPA) */}
+          {/* MAPA */}
           <div className="w-full lg:w-2/3 bg-gray-200 border border-gray-200 rounded-2xl shadow-sm relative overflow-hidden z-0 h-[400px] lg:h-full">
             
-            {/* ALERTA FLOTANTE DEL MAPA */}
             {alertaMapa && (
-              <div className="absolute top-4 left-4 right-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl shadow-xl z-[1000] flex items-center justify-between animate-fade-in text-xs font-bold">
+              <div className="absolute top-4 left-4 right-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl shadow-xl z-[1000] flex items-center justify-between text-xs font-bold">
                 <div className="flex items-center gap-2">
                   <svg className="w-4 h-4 flex-shrink-0 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
                   </svg>
                   <span>{alertaMapa}</span>
                 </div>
-                <button 
-                  onClick={() => setAlertaMapa('')} 
-                  className="text-red-400 hover:text-red-700 transition-colors p-1"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path>
-                  </svg>
+                <button onClick={() => setAlertaMapa('')} className="text-red-400 hover:text-red-700 p-1">
+                  ✕
                 </button>
               </div>
             )}
 
             <MapContainer 
-              key={`${mapCenter[0]}-${mapCenter[1]}`} 
               center={mapCenter} 
               zoom={tiendaSeleccionada ? 16 : 6} 
               style={{ width: '100%', height: '100%' }}
@@ -208,7 +188,6 @@ export default function DirectorioSucursales() {
               
               <RecenterMap coordenadas={mapCenter} zoom={tiendaSeleccionada ? 16 : 6} />
 
-              {/* Dibujar pines de TODAS las sucursales en el mapa */}
               {sucursales.map(t => {
                 if (!t.latitud || !t.longitud) return null;
                 const pos = [parseFloat(t.latitud), parseFloat(t.longitud)];
@@ -234,12 +213,10 @@ export default function DirectorioSucursales() {
                   </Marker>
                 );
               })}
-
             </MapContainer>
 
-            {/* Crédito del Motor */}
             <div className="absolute bottom-4 right-4 bg-white/90 backdrop-blur px-3 py-1.5 rounded-lg border border-gray-200 shadow-sm text-[10px] font-bold text-gray-500 pointer-events-none z-[999]">
-              Motor: OpenStreetMap (Gratis)
+              Motor: OpenStreetMap
             </div>
           </div>
 

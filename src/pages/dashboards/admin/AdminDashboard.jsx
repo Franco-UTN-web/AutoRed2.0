@@ -5,7 +5,7 @@ import AnalyticsView from './views/AnalyticsView';
 import InventoryAudit from './views/InventoryAudit';
 import UserManagement from './views/UserManagement';
 import ApiUsagePanel from './ApiUsagePanel';
-import { supabase } from '@/supabase';
+import { supabase } from '../../../supabase';
 
 export default function AdminDashboard() {
   const [vistaActiva, setVistaActiva] = useState('tiendas');

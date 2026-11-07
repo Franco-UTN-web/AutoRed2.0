@@ -1,5 +1,4 @@
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
-import RolesPanel from './pages/RolesPanel';
 import { useEffect } from 'react';
 import { supabase } from './supabase';
 
@@ -25,9 +24,7 @@ import AdminDashboard from './pages/dashboards/admin/AdminDashboard';
 
 function App() {
 
-  // ==========================================
   // ATRAPADOR DE SESIÓN DE GOOGLE (DIRECTO A SUPABASE)
-  // ==========================================
   useEffect(() => {
     const handleGoogleAuth = async () => {
       const hash = window.location.hash;
@@ -37,7 +34,6 @@ function App() {
         const accessToken = params.get("access_token");
         const type = params.get("type");
 
-        // 1. RECUPERACIÓN DE CONTRASEÑA
         if (type === "recovery") {
           localStorage.setItem('recovery_token', accessToken);
           window.history.replaceState(null, null, '/actualizar-password');
@@ -45,7 +41,6 @@ function App() {
           return;
         }
 
-        // 2. INICIO DE SESIÓN CON GOOGLE
         try {
           const { data: { user }, error } = await supabase.auth.getUser(accessToken);
 
@@ -54,7 +49,6 @@ function App() {
             return;
           }
 
-          // Consultar perfil en Supabase sin depender de Railway
           const { data: perfil } = await supabase
             .from('perfiles')
             .select('rol, activo, nombre')
@@ -72,7 +66,6 @@ function App() {
           let rolFinal = perfil?.rol;
           let nombreFinal = perfil?.nombre || user.user_metadata?.nombre || user.user_metadata?.full_name || 'Usuario';
 
-          // Crear perfil inicial si el usuario ingresa por primera vez con Google
           if (!perfil) {
             rolFinal = 'comprador';
             await supabase.from('perfiles').upsert({
@@ -98,7 +91,6 @@ function App() {
           localStorage.setItem('session_token', accessToken);
           localStorage.setItem('user_data', JSON.stringify(userData));
 
-          // Limpiar URL y redirigir
           window.history.replaceState(null, null, '/inicio');
           window.location.href = '/inicio'; 
 
@@ -110,7 +102,6 @@ function App() {
 
     handleGoogleAuth();
   }, []);
-  // ==========================================
 
   return (
     <Router>
@@ -128,10 +119,20 @@ function App() {
             <Route path="/producto/:id" element={<ProductDetail />} />
             <Route path="/tienda/:id" element={<StoreProfile />} />
             <Route path="/registro-negocio" element={<RegistroNegocio />} />
+            
+            {/* Rutas duplicadas para el mapa de sucursales sin pantalla en blanco */}
             <Route path="/directorio" element={<DirectorioSucursales />} />
+            <Route path="/sucursales" element={<DirectorioSucursales />} />
+
             <Route path="/actualizar-password" element={<UpdatePassword />} />
             <Route path="/recuperar-password" element={<RecuperarPassword />} />
-            <Route path="/admin" element={<RolesPanel />} />
+            
+            {/* Rutas asignadas al AdminDashboard oficial con protección de rol */}
+            <Route path="/admin" element={
+              <ProtectedRoute allowedRoles={['admin', 'administrador']}>
+                <AdminDashboard />
+              </ProtectedRoute>
+            } />
             
             <Route path="/dashboard/customer" element={
               <ProtectedRoute allowedRoles={['comprador']}>
