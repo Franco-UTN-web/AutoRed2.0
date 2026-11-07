@@ -58,7 +58,7 @@ export default function AdminDashboard() {
     setModalConfirm({ visible: true, id, accion, nombreTienda: nombre });
   };
 
-  const ejecutarAccion = async () => {
+const ejecutarAccion = async () => {
     const { id, accion } = modalConfirm;
     setModalConfirm({ visible: false, id: null, accion: '', nombreTienda: '' });
     
@@ -71,6 +71,10 @@ export default function AdminDashboard() {
     else if (accion === 'rechazar') nuevoEstado = 'RECHAZADO';
 
     try {
+      // 1. Obtener la tienda para conocer el propietario_id
+      const tiendaProcesada = [...solicitudes, ...tiendasActivas, ...tiendasSuspendidas].find(t => t.id === id);
+
+      // 2. Actualizar estado del establecimiento
       const { error } = await supabase
         .from('establecimientos')
         .update({ estado: nuevoEstado })
@@ -78,8 +82,14 @@ export default function AdminDashboard() {
 
       if (error) throw error;
 
-      const tiendaProcesada = [...solicitudes, ...tiendasActivas, ...tiendasSuspendidas].find(t => t.id === id);
-      
+      // 3. 🟢 ACTUALIZAR AUTOMÁTICAMENTE EL ROL A 'tienda' EN LA TABLA PERFILES
+      if ((accion === 'aprobar' || accion === 'reactivar') && tiendaProcesada?.propietario_id) {
+        await supabase
+          .from('perfiles')
+          .update({ rol: 'tienda' })
+          .eq('id', tiendaProcesada.propietario_id);
+      }
+
       setTimeout(() => {
         if (accion === 'aprobar' || accion === 'reactivar') {
           setSolicitudes(prev => prev.filter(sol => sol.id !== id));

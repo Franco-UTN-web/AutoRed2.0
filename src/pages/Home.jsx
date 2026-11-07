@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
+import { supabase } from '../supabase';
 
 export default function Home() {
   const [destacados, setDestacados] = useState([]);
@@ -8,60 +9,76 @@ export default function Home() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    try {
-      const datosUsuarioJson = localStorage.getItem('user_data');
-      if (datosUsuarioJson && datosUsuarioJson !== "undefined") {
-        const usuarioLogueado = JSON.parse(datosUsuarioJson);
-        setRolUsuario(usuarioLogueado.user_metadata?.role || 'comprador');
-      }
-    } catch (e) {
-      console.warn("No hay sesión activa");
-    }
-    const fetchDatos = async () => {
+    const cargarSesionYDatos = async () => {
+      // 1. Obtener rol del usuario directamente desde Supabase o localStorage
       try {
-        const [resInventario, resEstablecimientos] = await Promise.all([
-          fetch('https://backautored-production.up.railway.app/api/inventario/todos'),
-          fetch('https://backautored-production.up.railway.app/api/establecimientos/todos') 
-        ]);
+        const { data: { user } } = await supabase.auth.getUser();
 
-        if (resInventario.ok) {
-          const dataInventario = await resInventario.json();
-          // Tomamos 3 elementos para mantener el diseño balanceado en la cuadrícula
-          setDestacados(dataInventario.slice(0, 3)); 
+        if (user) {
+          const { data: perfil } = await supabase
+            .from('perfiles')
+            .select('rol')
+            .eq('id', user.id)
+            .maybeSingle();
 
-          let diccionarioTiendas = {};
-          if (resEstablecimientos.ok) {
-            const dataEstablecimientos = await resEstablecimientos.json();
-            dataEstablecimientos.forEach(tienda => {
-              diccionarioTiendas[tienda.id] = tienda.nombre; 
-            });
+          setRolUsuario(perfil?.rol || user.user_metadata?.role || 'comprador');
+        } else {
+          const datosUsuarioJson = localStorage.getItem('user_data');
+          if (datosUsuarioJson && datosUsuarioJson !== "undefined") {
+            const usuarioLogueado = JSON.parse(datosUsuarioJson);
+            setRolUsuario(usuarioLogueado.rol || usuarioLogueado.user_metadata?.role || 'comprador');
+          } else {
+            setRolUsuario('invitado');
           }
+        }
+      } catch (e) {
+        setRolUsuario('invitado');
+      }
 
-          const tiendasUnicas = [];
-          const idsVistos = new Set();
+      // 2. Obtener productos e inventario desde Supabase
+      try {
+        const { data: dataProductos, error: errProductos } = await supabase
+          .from('productos')
+          .select(`
+            *,
+            pieza:piezas(*)
+          `);
 
-          dataInventario.forEach(item => {
-            if (item.establecimiento_id && !idsVistos.has(item.establecimiento_id)) {
-              idsVistos.add(item.establecimiento_id);
-              
-              const nombreReal = diccionarioTiendas[item.establecimiento_id] || `Sucursal ${item.establecimiento_id.split('-')[0].toUpperCase()}`;
+        if (errProductos) console.error("Error cargando productos de Supabase:", errProductos.message);
 
-              tiendasUnicas.push({
-                id: item.establecimiento_id,
-                nombre: nombreReal,
-                calificacion: (Math.random() * (5.0 - 4.0) + 4.0).toFixed(1)
-              });
-            }
-          });
+        if (dataProductos && dataProductos.length > 0) {
+          setDestacados(dataProductos.slice(0, 3));
+        }
 
-          setTopTiendas(tiendasUnicas.slice(0, 4)); // Subimos a 4 para llenar mejor el sidebar
+        // 3. Obtener sucursales aprobadas desde la tabla 'establecimientos'
+        const { data: dataEstablecimientos, error: errEstablecimientos } = await supabase
+          .from('establecimientos')
+          .select('*');
+
+        if (errEstablecimientos) console.error("Error cargando establecimientos:", errEstablecimientos.message);
+
+        if (dataEstablecimientos) {
+          const aprobadas = dataEstablecimientos.filter(tienda => 
+            !tienda.estado || 
+            tienda.estado === 'APROBADO' || 
+            tienda.estado === 'aprobado' || 
+            tienda.activo === true
+          );
+
+          const tiendasFormateadas = aprobadas.slice(0, 4).map((tienda, index) => ({
+            id: tienda.id,
+            nombre: tienda.nombre || `Sucursal ${tienda.id.substring(0, 4).toUpperCase()}`,
+            calificacion: (4.5 + (index * 0.1)).toFixed(1)
+          }));
+
+          setTopTiendas(tiendasFormateadas);
         }
       } catch (error) {
-        console.error("Error cargando datos:", error);
+        console.error("Error al sincronizar datos desde Supabase:", error);
       }
     };
     
-    fetchDatos();
+    cargarSesionYDatos();
   }, []);
 
   return (
@@ -119,13 +136,12 @@ export default function Home() {
             </button>
           </div>
 
-{/* Carrusel de Marcas (Trust Badges) */}
+          {/* Carrusel de Marcas */}
           <div className="mt-12 pt-8 border-t border-gray-100/50">
             <p className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-6">
               Encuentra las mejores marcas del mercado
             </p>
             <div className="flex flex-wrap justify-center gap-8 md:gap-16 opacity-60 grayscale hover:grayscale-0 transition-all duration-500">
-              {/* Puedes reemplazar los src con logos reales en PNG que descargues */}
               <span className="text-xl font-black text-gray-800 flex items-center gap-1"><div className="w-4 h-4 rounded-full bg-blue-600"></div> BOSCH</span>
               <span className="text-xl font-black text-gray-800 flex items-center gap-1"><div className="w-4 h-4 bg-yellow-400"></div> LUK</span>
               <span className="text-xl font-black text-gray-800 flex items-center gap-1"><div className="w-4 h-4 bg-red-600 rounded-sm"></div> ACDelco</span>
@@ -140,7 +156,7 @@ export default function Home() {
       {/* 2. CONTENIDO PRINCIPAL */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20 grid grid-cols-1 lg:grid-cols-4 gap-12">
         
-        {/* Lado Izquierdo: Piezas Destacadas (Ahora en Grid) */}
+        {/* Lado Izquierdo: Piezas Destacadas */}
         <div className="lg:col-span-3">
           <div className="flex justify-between items-end mb-8 border-b border-gray-200 pb-4">
             <div>
@@ -160,46 +176,50 @@ export default function Home() {
                  Sincronizando inventario...
                </div>
             ) : (
-              destacados.map(item => (
-                <div key={item.id} className="bg-white border border-gray-200 rounded-2xl flex flex-col hover:shadow-xl hover:border-gray-300 transition-all duration-300 group overflow-hidden">
-                  
-                  {/* Imagen de la Tarjeta */}
-                  <div className="w-full h-48 bg-gray-50 p-6 flex items-center justify-center border-b border-gray-100 relative overflow-hidden">
-                    <span className="absolute top-3 left-3 bg-white/90 backdrop-blur text-gray-900 text-[10px] font-black px-2 py-1 rounded shadow-sm uppercase tracking-wider z-10 border border-gray-200">
-                      {item.pieza?.categoria}
-                    </span>
-                    {item.pieza?.imagen_url ? (
-                      <img src={item.pieza.imagen_url} className="max-h-full object-contain group-hover:scale-110 transition-transform duration-500" alt={item.pieza?.nombre_comercial} />
-                    ) : (
-                      <span className="text-4xl font-black text-gray-200 opacity-50">{item.pieza?.nombre_comercial?.charAt(0)}</span>
-                    )}
-                  </div>
-                  
-                  {/* Info de la Tarjeta */}
-                  <div className="p-5 flex flex-col flex-1">
-                    <div className="mb-auto">
-                      <p className="text-xs text-gray-400 font-bold mb-1 uppercase tracking-wider">{item.pieza?.marca}</p>
-                      <h4 className="text-lg font-black text-gray-900 leading-tight mb-2 line-clamp-2">{item.pieza?.nombre_comercial}</h4>
-                      <p className="text-xs text-gray-500 font-medium bg-gray-50 inline-block px-2 py-1 rounded border border-gray-100">
-                        Aplica para: <span className="font-bold text-gray-700">{item.pieza?.marca_vehiculo}</span>
-                      </p>
+              destacados.map(item => {
+                const precioMostrar = item.precio_oferta || item.precio || 0;
+
+                return (
+                  <div key={item.id} className="bg-white border border-gray-200 rounded-2xl flex flex-col hover:shadow-xl hover:border-gray-300 transition-all duration-300 group overflow-hidden">
+                    
+                    {/* Imagen de la Tarjeta */}
+                    <div className="w-full h-48 bg-gray-50 p-6 flex items-center justify-center border-b border-gray-100 relative overflow-hidden">
+                      <span className="absolute top-3 left-3 bg-white/90 backdrop-blur text-gray-900 text-[10px] font-black px-2 py-1 rounded shadow-sm uppercase tracking-wider z-10 border border-gray-200">
+                        {item.pieza?.categoria || 'Refacción'}
+                      </span>
+                      {item.pieza?.imagen_url ? (
+                        <img src={item.pieza.imagen_url} className="max-h-full object-contain group-hover:scale-110 transition-transform duration-500" alt={item.pieza?.nombre_comercial} />
+                      ) : (
+                        <span className="text-4xl font-black text-gray-200 opacity-50">{item.pieza?.nombre_comercial?.charAt(0) || 'P'}</span>
+                      )}
                     </div>
                     
-                    <div className="mt-6 flex items-end justify-between">
-                      <div>
-                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-0.5">Precio Especial</p>
-                        <p className="text-2xl font-black text-autored">${item.precio_oferta?.toFixed(2)}</p>
+                    {/* Info de la Tarjeta */}
+                    <div className="p-5 flex flex-col flex-1">
+                      <div className="mb-auto">
+                        <p className="text-xs text-gray-400 font-bold mb-1 uppercase tracking-wider">{item.pieza?.marca || 'Generico'}</p>
+                        <h4 className="text-lg font-black text-gray-900 leading-tight mb-2 line-clamp-2">{item.pieza?.nombre_comercial || 'Pieza Automotriz'}</h4>
+                        <p className="text-xs text-gray-500 font-medium bg-gray-50 inline-block px-2 py-1 rounded border border-gray-100">
+                          Aplica para: <span className="font-bold text-gray-700">{item.pieza?.marca_vehiculo || 'Universal'}</span>
+                        </p>
                       </div>
-                      <Link 
-                        to={`/producto/${item.id}`} 
-                        className="bg-gray-900 hover:bg-black text-white px-4 py-2 rounded-xl text-sm font-bold transition-colors shadow-sm"
-                      >
-                        Detalles
-                      </Link>
+                      
+                      <div className="mt-6 flex items-end justify-between">
+                        <div>
+                          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-0.5">Precio Especial</p>
+                          <p className="text-2xl font-black text-autored">${Number(precioMostrar).toFixed(2)}</p>
+                        </div>
+                        <Link 
+                          to={`/producto/${item.id}`} 
+                          className="bg-gray-900 hover:bg-black text-white px-4 py-2 rounded-xl text-sm font-bold transition-colors shadow-sm"
+                        >
+                          Detalles
+                        </Link>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>
@@ -209,7 +229,7 @@ export default function Home() {
           
           {/* TOP REFACCIONARIAS DINÁMICO */}
           <div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm">
-    <div className="flex items-center gap-2 mb-6">
+            <div className="flex items-center gap-2 mb-6">
               <svg className="w-5 h-5 text-yellow-500" fill="currentColor" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"></path></svg>
               <h3 className="text-sm font-black text-gray-900 uppercase tracking-wider">Top Sucursales</h3>
             </div>
@@ -259,13 +279,13 @@ export default function Home() {
             </div>
           )}
 
-          {(rolUsuario === 'admin' || rolUsuario === 'tienda') && (
+          {(rolUsuario === 'admin' || rolUsuario === 'administrador' || rolUsuario === 'tienda') && (
             <div className="bg-autoblue p-6 rounded-2xl shadow-sm text-white text-center overflow-hidden relative">
               <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-bl-full pointer-events-none"></div>
               
               <h3 className="text-white font-black mb-2 text-lg relative z-10">¡Hola de nuevo!</h3>
               <p className="text-blue-100 text-sm mb-6 font-medium relative z-10">Tienes acceso a herramientas de gestión avanzadas.</p>
-              <Link to={rolUsuario === 'admin' ? '/dashboard/admin' : '/dashboard/store'} className="block w-full bg-white text-autoblue hover:bg-blue-50 py-3.5 rounded-xl text-sm font-black transition-all shadow-md relative z-10">
+              <Link to={(rolUsuario === 'admin' || rolUsuario === 'administrador') ? '/dashboard/admin' : '/dashboard/store'} className="block w-full bg-white text-autoblue hover:bg-blue-50 py-3.5 rounded-xl text-sm font-black transition-all shadow-md relative z-10">
                 Ir a mi Panel de Control
               </Link>
             </div>
