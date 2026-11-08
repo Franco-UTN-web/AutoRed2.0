@@ -31,13 +31,28 @@ export default function Navbar() {
 
   const consultarPerfilBD = async (user) => {
     try {
+      // 1. Verificar si posee una tienda con estado APROBADO en la base de datos
+      const { data: tiendaAprobada } = await supabase
+        .from('establecimientos')
+        .select('id, estado')
+        .eq('propietario_id', user.id)
+        .or('estado.eq.APROBADO,estado.eq.aprobado')
+        .maybeSingle();
+
+      // 2. Consultar el perfil en la tabla de perfiles
       const { data: perfil } = await supabase
         .from('perfiles')
         .select('rol')
         .eq('id', user.id)
         .maybeSingle();
 
-      const rolFinal = perfil?.rol || user?.user_metadata?.role || user?.user_metadata?.rol || 'comprador';
+      let rolFinal = perfil?.rol || user?.user_metadata?.role || user?.user_metadata?.rol || 'comprador';
+
+      // Corrección defensiva: Si tiene tienda aprobada y no es admin, forzar el rol a 'tienda'
+      if (tiendaAprobada && rolFinal !== 'admin' && rolFinal !== 'administrador') {
+        rolFinal = 'tienda';
+      }
+
       setRol(rolFinal);
     } catch (error) {
       setRol('comprador');
