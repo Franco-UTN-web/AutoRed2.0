@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import ProductCard from '../components/ProductCard';
 import { supabase } from '../supabase';
+import { X, Check, ArrowRight, MessageSquare, ShieldCheck, Tag } from 'lucide-react';
 
 // Categorías rápidas para filtrado por sistema
 const CATEGORIAS_RAPIDAS = [
@@ -62,12 +63,8 @@ export default function Catalog() {
       setCargando(true);
       setError(null);
       try {
-        // Consultar inventarios con relaciones y establecimientos por separado
         const [resInventario, resEstablecimientos] = await Promise.all([
-          supabase.from('inventarios').select(`
-            *,
-            piezas (*)
-          `).order('created_at', { ascending: false }),
+          supabase.from('inventarios').select('*, piezas(*)').order('created_at', { ascending: false }),
           supabase.from('establecimientos').select('*')
         ]);
 
@@ -75,7 +72,6 @@ export default function Catalog() {
         let itemsNormalizados = [];
 
         if (resInventario.error) {
-          console.warn("Consulta JOIN falló, ejecutando fallback manual:", resInventario.error.message);
           const { data: simpleInv } = await supabase.from('inventarios').select('*');
           const { data: simplePiezas } = await supabase.from('piezas').select('*');
 
@@ -139,7 +135,7 @@ export default function Catalog() {
       const categoriaItem = producto.categoria || producto.pieza?.categoria;
       const categoriaBase = listaComparacion[0]?.categoria || listaComparacion[0]?.pieza?.categoria;
 
-      if (listaComparacion.length > 0 && categoriaBase !== categoriaItem) {
+      if (listaComparacion.length > 0 && categoriaBase && categoriaItem && categoriaBase !== categoriaItem) {
         mostrarAlerta(`Solo puedes comparar piezas de la misma categoría (${categoriaBase}).`);
         return;
       }
@@ -196,6 +192,16 @@ export default function Catalog() {
     setPrecioMax(5000); 
     setOrden('relevancia'); 
     setFiltroMiVehiculo('');
+  };
+
+  const contactarVendedorWa = (item) => {
+    const pieza = item.pieza || {};
+    const telefono = item.tiendaInfo?.telefono || "525555555555";
+    const telLimpio = String(telefono).replace(/\D/g, '');
+    const numDestino = telLimpio.startsWith('52') ? telLimpio : `52${telLimpio}`;
+    const numParte = pieza.numero_parte ? ` (PN: ${pieza.numero_parte})` : '';
+    const mensaje = `Hola, vengo de AutoRed. Me interesa comparar la pieza: *${pieza.nombre_comercial || item.nombre}*${numParte}. ¿Tienen disponibilidad en sucursal?`;
+    window.open(`https://wa.me/${numDestino}?text=${encodeURIComponent(mensaje)}`, '_blank');
   };
 
   return (
@@ -384,7 +390,7 @@ export default function Catalog() {
                 </div>
                 <div>
                   <p className="font-bold text-gray-900 text-sm">Piezas listas para comparar</p>
-                  <p className="text-xs text-gray-500 font-medium">Categoría: {listaComparacion[0]?.categoria || listaComparacion[0]?.pieza?.categoria}</p>
+                  <p className="text-xs text-gray-500 font-medium">Categoría: {listaComparacion[0]?.categoria || listaComparacion[0]?.pieza?.categoria || 'Autopartes'}</p>
                 </div>
               </div>
 
@@ -403,6 +409,119 @@ export default function Catalog() {
                   {listaComparacion.length < 2 ? 'Selecciona 1 más...' : 'Comparar Ahora'}
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* MODAL MATRIZ DE COMPARACIÓN LADO A LADO */}
+        {modalMatrizAbierto && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 overflow-y-auto">
+            <div className="bg-white rounded-3xl max-w-5xl w-full p-6 sm:p-8 shadow-2xl relative my-8 animate-fade-in max-h-[90vh] overflow-y-auto">
+              
+              <button 
+                onClick={() => setModalMatrizAbierto(false)} 
+                className="absolute top-5 right-5 text-gray-400 hover:text-gray-700 bg-gray-100 p-2 rounded-full transition-colors"
+              >
+                <X size={20} />
+              </button>
+
+              <div className="mb-6">
+                <span className="bg-blue-50 text-autoblue text-xs font-black uppercase tracking-wider px-3 py-1 rounded-full border border-blue-100">
+                  Matriz de Comparación
+                </span>
+                <h2 className="text-2xl sm:text-3xl font-black text-gray-900 mt-2">
+                  Comparativa de Refacciones
+                </h2>
+                <p className="text-gray-500 text-sm font-medium">
+                  Evalúa especificaciones, precios y vendedores antes de realizar tu compra.
+                </p>
+              </div>
+
+              {/* TABLA / GRIDA DE COMPARACIÓN */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 border-t border-gray-100 pt-6">
+                {listaComparacion.map((prod) => {
+                  const p = prod.pieza || {};
+                  const tienda = prod.tiendaInfo || {};
+                  const precio = prod.precio_oferta || prod.precio || 0;
+
+                  return (
+                    <div key={prod.id} className="bg-gray-50 rounded-2xl p-5 border border-gray-200 flex flex-col justify-between space-y-4">
+                      
+                      {/* Imagen y Titulo */}
+                      <div className="text-center">
+                        <div className="w-full h-40 bg-white rounded-xl flex items-center justify-center p-4 border border-gray-200 mb-3">
+                          {p.imagen_url ? (
+                            <img src={p.imagen_url} alt={p.nombre_comercial} className="max-h-full object-contain" />
+                          ) : (
+                            <span className="text-4xl font-black text-gray-300">{p.nombre_comercial?.charAt(0) || 'P'}</span>
+                          )}
+                        </div>
+                        <span className="bg-gray-200 text-gray-700 text-[10px] font-black uppercase px-2.5 py-0.5 rounded">
+                          {p.marca || 'Genérica'}
+                        </span>
+                        <h4 className="font-black text-gray-900 text-lg leading-tight mt-1">
+                          {p.nombre_comercial || prod.nombre}
+                        </h4>
+                      </div>
+
+                      {/* Especificaciones comparadas */}
+                      <div className="space-y-2.5 text-xs bg-white p-4 rounded-xl border border-gray-200">
+                        <div className="flex justify-between border-b pb-1">
+                          <span className="text-gray-500 font-bold">No. Parte:</span>
+                          <span className="font-mono font-bold text-autoblue">{p.numero_parte || 'N/A'}</span>
+                        </div>
+                        <div className="flex justify-between border-b pb-1">
+                          <span className="text-gray-500 font-bold">Aplicación:</span>
+                          <span className="font-medium text-gray-800">{p.marca_vehiculo} {p.modelo}</span>
+                        </div>
+                        <div className="flex justify-between border-b pb-1">
+                          <span className="text-gray-500 font-bold">Año:</span>
+                          <span className="font-medium text-gray-800">{p.anio_vehiculo || 'Todos'}</span>
+                        </div>
+                        <div className="flex justify-between border-b pb-1">
+                          <span className="text-gray-500 font-bold">Condición:</span>
+                          <span className="font-bold text-emerald-700">{p.condicion || 'Nueva'}</span>
+                        </div>
+                        <div className="flex justify-between border-b pb-1">
+                          <span className="text-gray-500 font-bold">Garantía:</span>
+                          <span className="font-medium text-gray-800">{p.garantia || 'Sin garantía'}</span>
+                        </div>
+                        <div className="flex justify-between border-b pb-1">
+                          <span className="text-gray-500 font-bold">Stock:</span>
+                          <span className="font-bold text-gray-900">{prod.stock || 1} pzas</span>
+                        </div>
+                        <div className="flex justify-between pt-1">
+                          <span className="text-gray-500 font-bold">Vendedor:</span>
+                          <span className="font-bold text-gray-800 truncate max-w-[120px]">{tienda.nombre || 'Sucursal AutoRed'}</span>
+                        </div>
+                      </div>
+
+                      {/* Precio y Botones de Acción */}
+                      <div className="pt-2">
+                        <p className="text-[10px] font-black uppercase text-gray-400 text-center">Precio Especial</p>
+                        <p className="text-3xl font-black text-autored text-center mb-4">${Number(precio).toFixed(2)}</p>
+                        
+                        <div className="space-y-2">
+                          <button
+                            onClick={() => contactarVendedorWa(prod)}
+                            className="w-full bg-[#25D366] hover:bg-[#1DA851] text-white font-bold py-2.5 px-4 rounded-xl text-xs flex items-center justify-center gap-2 transition-colors shadow-sm"
+                          >
+                            <MessageSquare size={16} /> Contactar Vendedor
+                          </button>
+                          <Link
+                            to={`/producto/${prod.id}`}
+                            className="w-full bg-gray-900 hover:bg-autoblue text-white font-bold py-2.5 px-4 rounded-xl text-xs flex items-center justify-center gap-2 transition-colors text-center"
+                          >
+                            Ver Ficha Completa
+                          </Link>
+                        </div>
+                      </div>
+
+                    </div>
+                  );
+                })}
+              </div>
+
             </div>
           </div>
         )}
