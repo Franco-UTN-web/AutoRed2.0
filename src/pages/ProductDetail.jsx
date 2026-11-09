@@ -5,7 +5,7 @@ import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 import { supabase } from '../supabase';
 
-// 🔧 PARCHE VITE: Arreglo para los íconos de Leaflet
+// Íconos de Leaflet para Vite
 import icon from 'leaflet/dist/images/marker-icon.png';
 import iconShadow from 'leaflet/dist/images/marker-shadow.png';
 
@@ -19,7 +19,6 @@ L.Marker.prototype.options.icon = DefaultIcon;
 
 const centroPorDefecto = [19.4326, -99.1332];
 
-// Componente para recentrar el mapa
 function RecenterMap({ coordenadas, zoom }) {
   const map = useMap();
   useEffect(() => {
@@ -40,7 +39,7 @@ export default function ProductDetail() {
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState(null);
 
-  // Estados para el Mapa
+  // Estados del Mapa
   const [mapCenter, setMapCenter] = useState(centroPorDefecto);
   const [tiendaSeleccionada, setTiendaSeleccionada] = useState(null);
   const [coordenadasMarcador, setCoordenadasMarcador] = useState(null);
@@ -51,27 +50,30 @@ export default function ProductDetail() {
       setCargando(true);
       setError(null);
       try {
-        // Consultar inventarios y establecimientos desde Supabase
+        // Consultar inventarios (con piezas) y establecimientos en paralelo sin forzar JOIN en PostgREST
         const [resInventario, resTiendas] = await Promise.all([
-          supabase.from('inventarios').select(`
-            *,
-            piezas (*),
-            establecimientos (*)
-          `),
+          supabase.from('inventarios').select('*, piezas(*)'),
           supabase.from('establecimientos').select('*')
         ]);
 
-        if (resInventario.error) throw resInventario.error;
-
-        const dataInventarioRaw = resInventario.data || [];
+        let rawInventario = resInventario.data || [];
         const dataTiendas = resTiendas.data || [];
 
-        // Normalizar inventario
-        const dataInventario = dataInventarioRaw.map(item => {
+        // Fallback si la consulta JOIN de piezas falla
+        if (resInventario.error || rawInventario.length === 0) {
+          const { data: invSimple } = await supabase.from('inventarios').select('*');
+          const { data: piezasSimple } = await supabase.from('piezas').select('*');
+          
+          rawInventario = (invSimple || []).map(item => ({
+            ...item,
+            piezas: (piezasSimple || []).find(p => p.id === item.pieza_id) || {}
+          }));
+        }
+
+        // Relacionar cada item de inventario con los datos de su establecimiento
+        const dataInventario = rawInventario.map(item => {
           const piezaObj = Array.isArray(item.piezas) ? item.piezas[0] : (item.piezas || {});
-          const tiendaObj = Array.isArray(item.establecimientos) 
-            ? item.establecimientos[0] 
-            : (item.establecimientos || dataTiendas.find(t => t.id === item.establecimiento_id) || {});
+          const tiendaObj = dataTiendas.find(t => t.id === item.establecimiento_id || t.id === item.sucursal_id) || {};
           return {
             ...item,
             pieza: piezaObj,
@@ -79,43 +81,23 @@ export default function ProductDetail() {
           };
         });
 
-        // 1. Encontrar el inventario exacto por ID
+        // 1. Buscar la pieza por ID de inventario o ID de pieza
         let itemEncontrado = dataInventario.find(item => String(item.id) === String(id));
 
-        // Si no lo encontró por inventario_id, buscar por pieza_id
         if (!itemEncontrado) {
           itemEncontrado = dataInventario.find(item => item.pieza && String(item.pieza.id) === String(id));
         }
 
-        // Fallback: consulta directa en Supabase
         if (!itemEncontrado) {
-          const { data: invDirecto } = await supabase
-            .from('inventarios')
-            .select('*, piezas(*), establecimientos(*)')
-            .eq('id', id)
-            .maybeSingle();
-
-          if (invDirecto) {
-            const piezaObj = Array.isArray(invDirecto.piezas) ? invDirecto.piezas[0] : (invDirecto.piezas || {});
-            const tiendaObj = Array.isArray(invDirecto.establecimientos) ? invDirecto.establecimientos[0] : (invDirecto.establecimientos || {});
-            itemEncontrado = { ...invDirecto, pieza: piezaObj, tiendaInfo: tiendaObj };
-          }
+          throw new Error('La pieza que buscas no existe en ningún inventario activo.');
         }
-
-        if (!itemEncontrado) throw new Error('La pieza que buscas no existe en ningún inventario activo.');
 
         setProductoPrincipal(itemEncontrado);
 
-        // 2. Buscar qué sucursales venden esta misma pieza
-        const piezaId = itemEncontrado.pieza?.id;
+        // 2. Filtrar sucursales que tengan esta misma refacción
+        const piezaId = itemEncontrado.pieza?.id || itemEncontrado.pieza_id;
         const tiendasConEstaPieza = dataInventario
-          .filter(item => item.pieza && item.pieza.id === piezaId)
-          .map(itemInventario => {
-            const datosTienda = itemInventario.tiendaInfo?.id 
-              ? itemInventario.tiendaInfo 
-              : dataTiendas.find(t => t.id === itemInventario.establecimiento_id);
-            return { ...itemInventario, tiendaInfo: datosTienda };
-          })
+          .filter(item => (item.pieza?.id === piezaId || item.pieza_id === piezaId))
           .filter(item => {
             const estado = item.tiendaInfo?.estado?.toUpperCase();
             return item.tiendaInfo && (estado === 'APROBADO' || !item.tiendaInfo.estado || item.tiendaInfo.activo === true);
@@ -147,7 +129,6 @@ export default function ProductDetail() {
     setTiendaSeleccionada(tienda);
     setAlertaMapa(''); 
     
-    // Si la tienda ya cuenta con latitud y longitud numéricas directas
     const lat = parseFloat(tienda.latitud);
     const lng = parseFloat(tienda.longitud);
 
@@ -327,7 +308,7 @@ export default function ProductDetail() {
                 )}
               </div>
 
-              {/* Botón de Acción Dinámico */}
+              {/* Botón de Acción */}
               <div className="flex flex-col sm:flex-row gap-4 mt-auto">
                 <button 
                   onClick={() => {
