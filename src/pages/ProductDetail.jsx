@@ -3,6 +3,7 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
+import { supabase } from '../supabase';
 
 // 🔧 PARCHE VITE: Arreglo para los íconos de Leaflet
 import icon from 'leaflet/dist/images/marker-icon.png';
@@ -18,11 +19,13 @@ L.Marker.prototype.options.icon = DefaultIcon;
 
 const centroPorDefecto = [19.4326, -99.1332];
 
-// Componente para recentrar el mapa mágicamente
+// Componente para recentrar el mapa
 function RecenterMap({ coordenadas, zoom }) {
   const map = useMap();
   useEffect(() => {
-    map.setView(coordenadas, zoom);
+    if (coordenadas && Array.isArray(coordenadas) && coordenadas.length === 2 && !isNaN(coordenadas[0]) && !isNaN(coordenadas[1])) {
+      map.setView(coordenadas, zoom, { animate: true });
+    }
   }, [coordenadas, zoom, map]);
   return null;
 }
@@ -45,44 +48,84 @@ export default function ProductDetail() {
 
   useEffect(() => {
     const fetchDatosCompletos = async () => {
+      setCargando(true);
+      setError(null);
       try {
-        // 🔥 MAGIA: Pedimos el inventario Y las tiendas al mismo tiempo
+        // Consultar inventarios y establecimientos desde Supabase
         const [resInventario, resTiendas] = await Promise.all([
-          fetch('https://backautored-production.up.railway.app/api/inventario/todos'),
-          fetch('https://backautored-production.up.railway.app/api/establecimientos/todos')
+          supabase.from('inventarios').select(`
+            *,
+            piezas (*),
+            establecimientos (*)
+          `),
+          supabase.from('establecimientos').select('*')
         ]);
 
-        if (!resInventario.ok || !resTiendas.ok) throw new Error('Error al conectar con la base de datos');
-        
-        const dataInventario = await resInventario.json();
-        const dataTiendas = await resTiendas.json();
-        
-        // 1. Encontrar el inventario exacto que el usuario clickeó
-       let itemEncontrado = dataInventario.find(item => item.id === id);
-        
-        //  Si no lo encontró, lo busca por ID de Pieza (El flujo del Chatbot)
+        if (resInventario.error) throw resInventario.error;
+
+        const dataInventarioRaw = resInventario.data || [];
+        const dataTiendas = resTiendas.data || [];
+
+        // Normalizar inventario
+        const dataInventario = dataInventarioRaw.map(item => {
+          const piezaObj = Array.isArray(item.piezas) ? item.piezas[0] : (item.piezas || {});
+          const tiendaObj = Array.isArray(item.establecimientos) 
+            ? item.establecimientos[0] 
+            : (item.establecimientos || dataTiendas.find(t => t.id === item.establecimiento_id) || {});
+          return {
+            ...item,
+            pieza: piezaObj,
+            tiendaInfo: tiendaObj
+          };
+        });
+
+        // 1. Encontrar el inventario exacto por ID
+        let itemEncontrado = dataInventario.find(item => String(item.id) === String(id));
+
+        // Si no lo encontró por inventario_id, buscar por pieza_id
         if (!itemEncontrado) {
-          itemEncontrado = dataInventario.find(item => item.pieza && item.pieza.id === id);
+          itemEncontrado = dataInventario.find(item => item.pieza && String(item.pieza.id) === String(id));
+        }
+
+        // Fallback: consulta directa en Supabase
+        if (!itemEncontrado) {
+          const { data: invDirecto } = await supabase
+            .from('inventarios')
+            .select('*, piezas(*), establecimientos(*)')
+            .eq('id', id)
+            .maybeSingle();
+
+          if (invDirecto) {
+            const piezaObj = Array.isArray(invDirecto.piezas) ? invDirecto.piezas[0] : (invDirecto.piezas || {});
+            const tiendaObj = Array.isArray(invDirecto.establecimientos) ? invDirecto.establecimientos[0] : (invDirecto.establecimientos || {});
+            itemEncontrado = { ...invDirecto, pieza: piezaObj, tiendaInfo: tiendaObj };
+          }
         }
 
         if (!itemEncontrado) throw new Error('La pieza que buscas no existe en ningún inventario activo.');
-        
+
         setProductoPrincipal(itemEncontrado);
 
-        // 2. Buscar qué sucursales venden la pieza Y cruzar sus datos con la info de la tienda
+        // 2. Buscar qué sucursales venden esta misma pieza
+        const piezaId = itemEncontrado.pieza?.id;
         const tiendasConEstaPieza = dataInventario
-          .filter(item => item.pieza.id === itemEncontrado.pieza.id)
+          .filter(item => item.pieza && item.pieza.id === piezaId)
           .map(itemInventario => {
-            // Buscamos los datos reales de la tienda usando el establecimiento_id
-            const datosTienda = dataTiendas.find(t => t.id === itemInventario.establecimiento_id);
+            const datosTienda = itemInventario.tiendaInfo?.id 
+              ? itemInventario.tiendaInfo 
+              : dataTiendas.find(t => t.id === itemInventario.establecimiento_id);
             return { ...itemInventario, tiendaInfo: datosTienda };
           })
-          .filter(item => item.tiendaInfo && item.tiendaInfo.estado === 'APROBADO'); // Solo tiendas aprobadas
-          
-        setSucursalesDisponibles(tiendasConEstaPieza);
+          .filter(item => {
+            const estado = item.tiendaInfo?.estado?.toUpperCase();
+            return item.tiendaInfo && (estado === 'APROBADO' || !item.tiendaInfo.estado || item.tiendaInfo.activo === true);
+          });
 
-      } catch (error) {
-        setError(error.message);
+        setSucursalesDisponibles(tiendasConEstaPieza.length > 0 ? tiendasConEstaPieza : [itemEncontrado]);
+
+      } catch (err) {
+        console.error("Error al cargar producto desde Supabase:", err);
+        setError(err.message || "Error al conectar con la base de datos.");
       } finally {
         setCargando(false);
       }
@@ -91,42 +134,50 @@ export default function ProductDetail() {
     fetchDatosCompletos();
   }, [id]);
 
-  // ACTULIZADO: Ahora usa el teléfono real de la tienda
   const contactarWhatsApp = (stock, precio, nombrePieza, marca, numeroParte, telefonoTienda) => {
-    const numeroDestino = telefonoTienda || "525555555555"; 
+    const telLimpio = telefonoTienda ? String(telefonoTienda).replace(/\D/g, '') : "525555555555";
+    const numeroDestino = telLimpio.startsWith('52') ? telLimpio : `52${telLimpio}`;
     const numParteTexto = numeroParte ? ` (PN: ${numeroParte})` : '';
     const mensaje = `Hola, vengo de AutoRed. Me interesa la pieza: *${nombrePieza}*${numParteTexto} Marca: ${marca}. ¿Aún tienen stock de ${stock} piezas a $${precio}?`;
     window.open(`https://wa.me/${numeroDestino}?text=${encodeURIComponent(mensaje)}`, '_blank');
   };
 
-  // Función para ubicar la tienda en el mapa
   const ubicarEnMapa = async (tiendaUnida) => {
-    const tienda = tiendaUnida.tiendaInfo;
+    const tienda = tiendaUnida.tiendaInfo || {};
     setTiendaSeleccionada(tienda);
     setAlertaMapa(''); 
     
-    // Si la tienda no tiene dirección completa (para evitar errores)
+    // Si la tienda ya cuenta con latitud y longitud numéricas directas
+    const lat = parseFloat(tienda.latitud);
+    const lng = parseFloat(tienda.longitud);
+
+    if (!isNaN(lat) && !isNaN(lng)) {
+      const nuevasCoords = [lat, lng];
+      setMapCenter(nuevasCoords);
+      setCoordenadasMarcador(nuevasCoords);
+      return;
+    }
+
     if (!tienda.calle) {
        setAlertaMapa("📍 Esta sucursal aún no registra su dirección completa.");
        return;
     }
 
-    const direccionCompleta = `${tienda.calle} ${tienda.numero}, ${tienda.colonia}, ${tienda.ciudad || tienda.municipio || ''}, ${tienda.estadoRep}, México`;
+    const direccionCompleta = `${tienda.calle} ${tienda.numero || ''}, ${tienda.colonia || ''}, ${tienda.ciudad || tienda.municipio || ''}, ${tienda.estado_rep || tienda.estadoRep || ''}, México`;
 
     try {
       const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(direccionCompleta)}`);
       const data = await res.json();
 
       if (data && data.length > 0) {
-        const lat = parseFloat(data[0].lat);
-        const lng = parseFloat(data[0].lon);
-        const nuevasCoordenadas = [lat, lng];
-        
-        setMapCenter(nuevasCoordenadas);
-        setCoordenadasMarcador(nuevasCoordenadas);
-        
-        // Hacemos un poco de scroll hacia el mapa en móviles
-        window.scrollBy({ top: 300, behavior: 'smooth' });
+        const latNom = parseFloat(data[0].lat);
+        const lngNom = parseFloat(data[0].lon);
+        if (!isNaN(latNom) && !isNaN(lngNom)) {
+          const nuevasCoordenadas = [latNom, lngNom];
+          setMapCenter(nuevasCoordenadas);
+          setCoordenadasMarcador(nuevasCoordenadas);
+          window.scrollBy({ top: 300, behavior: 'smooth' });
+        }
       } else {
         setAlertaMapa("📍 OpenStreetMap no pudo ubicar la dirección exacta. Mostrando el mapa general.");
       }
@@ -153,7 +204,8 @@ export default function ProductDetail() {
     );
   }
 
-  const { pieza, precio_oferta, stock } = productoPrincipal;
+  const { pieza = {}, precio_oferta, precio, stock } = productoPrincipal;
+  const precioMostrar = precio_oferta || precio || 0;
 
   return (
     <div className="min-h-screen bg-gray-50 py-10 font-sans">
@@ -165,7 +217,7 @@ export default function ProductDetail() {
           <span className="mx-2">/</span>
           <Link to="/catalogo" className="hover:text-autoblue font-bold">Catálogo</Link>
           <span className="mx-2">/</span>
-          <span className="text-gray-900 font-bold truncate">{pieza.nombre_comercial}</span>
+          <span className="text-gray-900 font-bold truncate">{pieza.nombre_comercial || productoPrincipal.nombre}</span>
         </div>
 
         {/* Tarjeta Principal de Detalles */}
@@ -181,7 +233,7 @@ export default function ProductDetail() {
                   className="w-full max-h-96 object-contain transform transition-transform duration-500 hover:scale-105"
                 />
               ) : (
-                <span className="text-gray-300 font-medium font-black text-4xl opacity-50">{pieza.nombre_comercial?.charAt(0)}</span>
+                <span className="text-gray-300 font-black text-4xl opacity-50">{pieza.nombre_comercial?.charAt(0) || 'P'}</span>
               )}
             </div>
 
@@ -191,7 +243,7 @@ export default function ProductDetail() {
                 
                 <div className="flex gap-2 flex-wrap">
                   <span className="bg-blue-50 text-autoblue px-3 py-1 rounded-full border border-blue-100 font-bold text-xs tracking-wider uppercase">
-                    {pieza.marca}
+                    {pieza.marca || 'Genérica'}
                   </span>
                   
                   {/* Etiqueta de Condición */}
@@ -216,7 +268,7 @@ export default function ProductDetail() {
               </div>
 
               <h1 className="text-3xl lg:text-4xl font-black text-gray-900 mb-2 leading-tight">
-                {pieza.nombre_comercial}
+                {pieza.nombre_comercial || productoPrincipal.nombre}
               </h1>
 
               {/* Número de Parte destacado */}
@@ -229,7 +281,7 @@ export default function ProductDetail() {
               )}
               
               <div className="mb-8">
-                <span className="text-4xl font-black text-autored">${precio_oferta?.toFixed(2)} <span className="text-lg text-gray-500 font-medium">MXN</span></span>
+                <span className="text-4xl font-black text-autored">${Number(precioMostrar).toFixed(2)} <span className="text-lg text-gray-500 font-medium">MXN</span></span>
               </div>
 
               {/* DESCRIPCIÓN DEL VENDEDOR */}
@@ -251,15 +303,15 @@ export default function ProductDetail() {
                 
                 <div className="grid grid-cols-3 gap-2 text-sm">
                   <span className="col-span-1 text-gray-500 font-bold">Compatibilidad:</span>
-                  <span className="col-span-2 text-gray-900 font-medium">{pieza.marca_vehiculo} {pieza.modelo}</span>
+                  <span className="col-span-2 text-gray-900 font-medium">{pieza.marca_vehiculo || 'Universal'} {pieza.modelo || ''}</span>
                 </div>
                 <div className="grid grid-cols-3 gap-2 text-sm">
                   <span className="col-span-1 text-gray-500 font-bold">Año:</span>
-                  <span className="col-span-2 text-gray-900 font-medium">{pieza.anio_vehiculo}</span>
+                  <span className="col-span-2 text-gray-900 font-medium">{pieza.anio_vehiculo || 'Todos los años'}</span>
                 </div>
                 <div className="grid grid-cols-3 gap-2 text-sm">
                   <span className="col-span-1 text-gray-500 font-bold">Categoría:</span>
-                  <span className="col-span-2 text-gray-900 font-medium">{pieza.categoria}</span>
+                  <span className="col-span-2 text-gray-900 font-medium">{pieza.categoria || 'Autopartes'}</span>
                 </div>
                 {pieza.nivel_calidad && (
                   <div className="grid grid-cols-3 gap-2 text-sm">
@@ -276,12 +328,10 @@ export default function ProductDetail() {
               </div>
 
               {/* Botón de Acción Dinámico */}
-              {/* Botón de Acción Dinámico */}
               <div className="flex flex-col sm:flex-row gap-4 mt-auto">
                 <button 
                   onClick={() => {
                     setShowStores(!showStores);
-                    // 🔥 MAGIA: Si estamos abriendo el mapa y hay tiendas, autoseleccionamos la primera
                     if (!showStores && sucursalesDisponibles.length > 0) {
                       ubicarEnMapa(sucursalesDisponibles[0]);
                     }
@@ -289,7 +339,7 @@ export default function ProductDetail() {
                   className="flex-1 bg-autoblue hover:bg-blue-900 text-white py-4 rounded-xl font-black text-lg transition-all shadow-md hover:shadow-lg flex justify-center items-center gap-2"
                 >
                   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
-                  {showStores ? 'Ocultar Disponibilidad' : `Ver en ${sucursalesDisponibles.length} Sucursales`}
+                  {showStores ? 'Ocultar Disponibilidad' : `Ver en ${sucursalesDisponibles.length} ${sucursalesDisponibles.length === 1 ? 'Sucursal' : 'Sucursales'}`}
                 </button>
               </div>
 
@@ -297,7 +347,7 @@ export default function ProductDetail() {
           </div>
         </div>
 
-        {/* 🔥 SECCIÓN DE MAPA Y SUCURSALES 🔥 */}
+        {/* SECCIÓN DE MAPA Y SUCURSALES */}
         {showStores && (
           <div className="mt-12 animate-fade-in">
             <h2 className="text-2xl font-black text-gray-900 mb-6 flex items-center gap-2">
@@ -310,7 +360,8 @@ export default function ProductDetail() {
               {/* LISTA DE TIENDAS */}
               <div className="w-full lg:w-1/2 space-y-4 overflow-y-auto pr-2">
                 {sucursalesDisponibles.map(sucursalUnida => {
-                  const { tiendaInfo } = sucursalUnida;
+                  const { tiendaInfo = {} } = sucursalUnida;
+                  const precioItem = sucursalUnida.precio_oferta || sucursalUnida.precio || 0;
                   return (
                     <div 
                       key={sucursalUnida.id} 
@@ -324,11 +375,11 @@ export default function ProductDetail() {
                           <h3 className="text-lg font-black text-gray-900">{tiendaInfo.nombre || 'Sucursal Registrada'}</h3>
                           <p className="text-xs text-gray-500 font-medium flex items-center gap-1 mt-1">
                             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path></svg>
-                            {tiendaInfo.ciudad || tiendaInfo.estadoRep || 'Ver ubicación en mapa'}
+                            {tiendaInfo.ciudad || tiendaInfo.estadoRep || tiendaInfo.estado_rep || 'Ver ubicación en mapa'}
                           </p>
                         </div>
                         <div className="text-right">
-                          <p className="text-xl font-black text-autored">${sucursalUnida.precio_oferta?.toFixed(2)}</p>
+                          <p className="text-xl font-black text-autored">${Number(precioItem).toFixed(2)}</p>
                           <p className={`text-[10px] font-bold px-2 py-0.5 rounded mt-1 inline-block uppercase tracking-wider ${sucursalUnida.stock > 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
                             {sucursalUnida.stock === 0 ? 'Agotado' : `${sucursalUnida.stock} pzas`}
                           </p>
@@ -337,8 +388,8 @@ export default function ProductDetail() {
                       
                       <button 
                         onClick={(e) => {
-                          e.stopPropagation(); // Evita que se abra el mapa al darle a contactar
-                          contactarWhatsApp(sucursalUnida.stock, sucursalUnida.precio_oferta, pieza.nombre_comercial, pieza.marca, pieza.numero_parte, tiendaInfo.telefono);
+                          e.stopPropagation();
+                          contactarWhatsApp(sucursalUnida.stock, precioItem, pieza.nombre_comercial || productoPrincipal.nombre, pieza.marca, pieza.numero_parte, tiendaInfo.telefono);
                         }}
                         disabled={sucursalUnida.stock === 0}
                         className="w-full mt-3 bg-[#25D366] hover:bg-[#1DA851] disabled:bg-gray-200 disabled:text-gray-400 text-white py-2 rounded-lg font-black text-sm transition-colors flex items-center justify-center gap-2"
@@ -351,11 +402,9 @@ export default function ProductDetail() {
                 })}
               </div>
 
-           {/* MAPA LEAFLET */}
-              {/* 🔥 1. Cambiamos min-h-[300px] por h-[300px] estricto para móvil */}
+              {/* MAPA LEAFLET */}
               <div className="w-full lg:w-1/2 h-[300px] lg:h-full bg-gray-200 border border-gray-200 rounded-2xl shadow-sm relative overflow-hidden z-0">
                 
-                {/* Alerta Personalizada */}
                 {alertaMapa && (
                   <div className="absolute top-4 left-4 right-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl shadow-xl z-[1000] flex items-center justify-between animate-fade-in text-xs font-bold">
                     <div className="flex items-center gap-2">
@@ -372,7 +421,6 @@ export default function ProductDetail() {
                   </div>
                 )}
 
-                {/* 🔥 2. Agregamos el prop "key" atado a mapCenter para evitar el cuadro gris */}
                 <MapContainer 
                   key={`${mapCenter[0]}-${mapCenter[1]}`} 
                   center={mapCenter} 
@@ -388,8 +436,8 @@ export default function ProductDetail() {
                     <Marker position={coordenadasMarcador}>
                       <Popup>
                         <div className="p-1 max-w-[200px] text-center">
-                          <h4 className="font-black text-gray-900 text-sm">{tiendaSeleccionada.nombre}</h4>
-                          <p className="text-xs text-gray-600 mt-1">{tiendaSeleccionada.calle} #{tiendaSeleccionada.numero}</p>
+                          <h4 className="font-black text-gray-900 text-sm">{tiendaSeleccionada.nombre || 'Sucursal'}</h4>
+                          <p className="text-xs text-gray-600 mt-1">{tiendaSeleccionada.calle ? `${tiendaSeleccionada.calle} #${tiendaSeleccionada.numero || ''}` : 'Ubicación registrada'}</p>
                         </div>
                       </Popup>
                     </Marker>
