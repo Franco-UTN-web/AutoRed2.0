@@ -62,35 +62,42 @@ export default function Catalog() {
       setCargando(true);
       setError(null);
       try {
-        // Consulta relacional a inventarios, piezas y establecimientos
+        // Consultar inventarios con relaciones y establecimientos por separado
         const [resInventario, resEstablecimientos] = await Promise.all([
           supabase.from('inventarios').select(`
             *,
-            piezas (*),
-            establecimientos (*)
+            piezas (*)
           `).order('created_at', { ascending: false }),
           supabase.from('establecimientos').select('*')
         ]);
 
-        if (resInventario.error) throw resInventario.error;
-        if (resEstablecimientos.error) throw resEstablecimientos.error;
-
         const dataEstablecimientos = resEstablecimientos.data || [];
+        let itemsNormalizados = [];
 
-        // Normalizar la pieza y la tienda asignada
-        const inventarioCompleto = (resInventario.data || []).map(item => {
-          const piezaObj = Array.isArray(item.piezas) ? item.piezas[0] : (item.piezas || {});
-          const tiendaObj = Array.isArray(item.establecimientos) ? item.establecimientos[0] : (item.establecimientos || {});
-          return { 
-            ...item, 
-            pieza: piezaObj,
-            tiendaInfo: tiendaObj 
-          };
-        });
+        if (resInventario.error) {
+          console.warn("Consulta JOIN falló, ejecutando fallback manual:", resInventario.error.message);
+          const { data: simpleInv } = await supabase.from('inventarios').select('*');
+          const { data: simplePiezas } = await supabase.from('piezas').select('*');
 
-        setProductos(inventarioCompleto);
+          itemsNormalizados = (simpleInv || []).map(item => ({
+            ...item,
+            pieza: (simplePiezas || []).find(p => p.id === item.pieza_id) || {},
+            tiendaInfo: dataEstablecimientos.find(t => t.id === item.establecimiento_id) || {}
+          }));
+        } else {
+          itemsNormalizados = (resInventario.data || []).map(item => {
+            const piezaObj = Array.isArray(item.piezas) ? item.piezas[0] : (item.piezas || {});
+            const tiendaObj = dataEstablecimientos.find(t => t.id === item.establecimiento_id || t.id === item.sucursal_id) || {};
+            return { 
+              ...item, 
+              pieza: piezaObj,
+              tiendaInfo: tiendaObj 
+            };
+          });
+        }
 
-        // Lógica de usuario autenticado
+        setProductos(itemsNormalizados);
+
         if (usuarioLogueado) {
           const miTienda = dataEstablecimientos.find(t => t.propietario_id === usuarioLogueado.id);
           if (miTienda) setMiTiendaId(miTienda.id);
@@ -115,7 +122,6 @@ export default function Catalog() {
     inicializarCatalogo();
   }, []);
 
-  // --- LÓGICA DEL COMPARADOR ---
   const mostrarAlerta = (mensaje) => {
     setAlerta({ visible: true, mensaje });
     setTimeout(() => setAlerta({ visible: false, mensaje: '' }), 3000);
@@ -141,7 +147,6 @@ export default function Catalog() {
     }
   };
 
-  // --- FILTROS INTELIGENTES ---
   const productosFiltrados = useMemo(() => {
     let filtrados = productos.filter(item => {
       const nombreComercial = item.nombre || item.pieza?.nombre_comercial || '';
@@ -216,9 +221,6 @@ export default function Catalog() {
             <svg className="w-32 h-32 text-blue-50 transform rotate-12" fill="currentColor" viewBox="0 0 24 24">
               <path d="M19.39 5.81L16.2 3.03a1.98 1.98 0 0 0-1.32-.48H9.12c-.48 0-.95.17-1.32.48L4.61 5.81a2 2 0 0 0-.66 1.33L3 17.5c0 1.38 1.12 2.5 2.5 2.5h13c1.38 0 2.5-1.12 2.5-2.5l-.95-10.36a1.98 1.98 0 0 0-.66-1.33zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"></path>
             </svg>
-            <div className="absolute inset-0 flex items-center justify-center">
-              <div className="w-12 h-12 bg-autoblue/10 rounded-full animate-pulse"></div>
-            </div>
           </div>
         </div>
 
@@ -271,7 +273,6 @@ export default function Catalog() {
                 {misVehiculos.length > 0 && (
                   <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg animate-fade-in">
                     <label className="text-[10px] text-autoblue font-black block mb-2 uppercase flex items-center gap-1 tracking-wider">
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
                       Filtro Inteligente
                     </label>
                     <select 
@@ -330,7 +331,6 @@ export default function Catalog() {
               </select>
             </div>
 
-            {/* ESTADO CARGANDO */}
             {cargando && (
               <div className="flex flex-col items-center justify-center py-20 bg-white rounded-3xl border border-gray-200">
                 <div className="w-10 h-10 border-4 border-autoblue border-t-transparent rounded-full animate-spin mb-4"></div>
@@ -338,7 +338,6 @@ export default function Catalog() {
               </div>
             )}
 
-            {/* ESTADO VACÍO */}
             {!cargando && productosFiltrados.length === 0 && (
               <div className="bg-white border border-gray-200 rounded-3xl p-12 sm:p-20 text-center shadow-sm flex flex-col items-center justify-center mt-4">
                 <div className="bg-gray-50 p-6 rounded-full mb-6 border border-gray-100 shadow-inner">
@@ -379,7 +378,6 @@ export default function Catalog() {
         {listaComparacion.length > 0 && (
           <div className="fixed bottom-0 left-0 w-full bg-white border-t border-gray-200 shadow-[0_-10px_30px_rgba(0,0,0,0.1)] z-40 animate-slide-up">
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-col sm:flex-row justify-between items-center gap-4">
-              
               <div className="flex items-center gap-4">
                 <div className="bg-blue-50 text-autoblue w-10 h-10 rounded-full flex items-center justify-center font-black text-lg border border-blue-100">
                   {listaComparacion.length}
@@ -405,103 +403,11 @@ export default function Catalog() {
                   {listaComparacion.length < 2 ? 'Selecciona 1 más...' : 'Comparar Ahora'}
                 </button>
               </div>
-
             </div>
           </div>
         )}
 
       </div>
-
-      {/* MODAL MATRIZ DE COMPARACIÓN */}
-      {modalMatrizAbierto && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black bg-opacity-80 p-4 animate-fade-in">
-          <div className="bg-white rounded-2xl w-full max-w-6xl max-h-[90vh] flex flex-col shadow-2xl">
-            
-            <div className="flex justify-between items-center p-6 border-b border-gray-100">
-              <div>
-                <h3 className="text-2xl font-black text-gray-900">Comparativa de Piezas</h3>
-                <p className="text-sm text-gray-500 font-medium mt-1">Analiza características y precios lado a lado</p>
-              </div>
-              <button 
-                onClick={() => setModalMatrizAbierto(false)} 
-                className="text-gray-400 hover:text-red-500 bg-gray-100 hover:bg-red-50 p-2 rounded-full transition-colors"
-              >
-                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-
-            <div className="p-6 overflow-y-auto flex-1 bg-gray-50 rounded-b-2xl">
-              <div className="flex flex-col lg:flex-row gap-6">
-                {listaComparacion.map((item) => {
-                  const nombre = item.nombre || item.pieza?.nombre_comercial || 'Pieza';
-                  const precio = item.precio_oferta || item.precio || item.precio_lista || 0;
-                  const imagen = item.pieza?.imagen_url || item.imagen_url;
-                  const marca = item.marca || item.pieza?.marca || 'N/A';
-                  const marcaVeh = item.marca_vehiculo || item.pieza?.marca_vehiculo || '';
-                  const modeloVeh = item.modelo || item.pieza?.modelo || '';
-                  const numParte = item.numero_parte || item.pieza?.numero_parte || 'N/A';
-                  const condicion = item.condicion || item.pieza?.condicion || 'Nuevo';
-                  const garantia = item.garantia || item.pieza?.garantia || 'N/A';
-
-                  return (
-                    <div key={`comp-${item.id}`} className="flex-1 bg-white border border-gray-200 rounded-2xl p-6 shadow-sm flex flex-col hover:shadow-md transition-shadow">
-                      <div className="h-48 bg-gray-50 rounded-xl flex items-center justify-center mb-6 border border-gray-100 p-4 relative overflow-hidden">
-                        {imagen ? (
-                          <img src={imagen} className="max-h-full object-contain" alt="pieza" />
-                        ) : (
-                          <span className="text-gray-300 font-black text-6xl">{nombre.charAt(0)}</span>
-                        )}
-                      </div>
-                      
-                      <div className="text-center mb-6">
-                        <h4 className="font-black text-gray-900 text-lg mb-2 h-14 line-clamp-2 leading-tight">{nombre}</h4>
-                        <p className="text-4xl font-black text-autored">${precio}</p>
-                      </div>
-
-                      <div className="space-y-3 flex-1 text-sm bg-gray-50 p-4 rounded-xl border border-gray-100">
-                        <div className="flex justify-between border-b border-gray-200 pb-2">
-                          <span className="font-bold text-gray-500 uppercase text-[10px] tracking-wider">Marca Fab.</span>
-                          <span className="font-black text-gray-900">{marca}</span>
-                        </div>
-                        <div className="flex justify-between border-b border-gray-200 pb-2">
-                          <span className="font-bold text-gray-500 uppercase text-[10px] tracking-wider">Compatibilidad</span>
-                          <span className="font-medium text-gray-900 text-right">{marcaVeh} {modeloVeh}</span>
-                        </div>
-                        <div className="flex justify-between border-b border-gray-200 pb-2">
-                          <span className="font-bold text-gray-500 uppercase text-[10px] tracking-wider">No. Parte</span>
-                          <span className="font-mono font-bold text-autoblue bg-blue-50 px-1 rounded">{numParte}</span>
-                        </div>
-                        <div className="flex justify-between border-b border-gray-200 pb-2">
-                          <span className="font-bold text-gray-500 uppercase text-[10px] tracking-wider">Condición</span>
-                          <span className="font-medium text-gray-900">{condicion}</span>
-                        </div>
-                        <div className="flex justify-between pb-1">
-                          <span className="font-bold text-gray-500 uppercase text-[10px] tracking-wider">Garantía</span>
-                          <span className="font-medium text-gray-900">{garantia}</span>
-                        </div>
-                      </div>
-
-                      <div className="mt-6">
-                        <Link 
-                          to={`/producto/${item.id}`} 
-                          className="flex items-center justify-center gap-2 w-full bg-gray-900 hover:bg-black text-white py-3.5 rounded-xl font-bold transition-colors shadow-sm"
-                        >
-                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
-                          Ver Detalles
-                        </Link>
-                      </div>
-
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-          </div>
-        </div>
-      )}
     </div>
   );
 }

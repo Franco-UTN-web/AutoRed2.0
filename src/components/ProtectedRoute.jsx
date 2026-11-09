@@ -9,7 +9,6 @@ export default function ProtectedRoute({ children, allowedRoles = [] }) {
   useEffect(() => {
     const verificarAcceso = async () => {
       try {
-        // 1. Obtener usuario de la sesión activa de Supabase
         const { data: { user } } = await supabase.auth.getUser();
 
         if (!user) {
@@ -18,26 +17,26 @@ export default function ProtectedRoute({ children, allowedRoles = [] }) {
           return;
         }
 
-        // 2. Consultar ROL FRESCO directamente en la base de datos
+        // 1. Verificar si el usuario es dueño de un establecimiento APROBADO
+        const { data: tiendaAprobada } = await supabase
+          .from('establecimientos')
+          .select('id, estado')
+          .eq('propietario_id', user.id)
+          .or('estado.eq.APROBADO,estado.eq.aprobado')
+          .maybeSingle();
+
+        // 2. Consultar perfil en la base de datos
         const { data: perfil } = await supabase
           .from('perfiles')
           .select('rol, activo')
           .eq('id', user.id)
           .maybeSingle();
 
-        const rolActual = perfil?.rol || user.user_metadata?.role || 'comprador';
+        let rolActual = perfil?.rol || user?.user_metadata?.role || user?.user_metadata?.rol || 'comprador';
 
-        // 3. Sincronizar el rol fresco en el localStorage para que el Navbar responda
-        const datosLocales = localStorage.getItem('user_data');
-        if (datosLocales && datosLocales !== "undefined") {
-          try {
-            const parsed = JSON.parse(datosLocales);
-            parsed.rol = rolActual;
-            if (parsed.user_metadata) parsed.user_metadata.role = rolActual;
-            localStorage.setItem('user_data', JSON.stringify(parsed));
-          } catch (e) {
-            console.warn("Error parseando user_data local");
-          }
+        // Si posee tienda aprobada y no es admin, forzar la autorización como 'tienda'
+        if (tiendaAprobada && rolActual !== 'admin' && rolActual !== 'administrador') {
+          rolActual = 'tienda';
         }
 
         if (perfil && perfil.activo === false) {
@@ -49,7 +48,6 @@ export default function ProtectedRoute({ children, allowedRoles = [] }) {
           return;
         }
 
-        // 4. Verificar si el rol actual coincide con los roles permitidos
         if (allowedRoles.includes(rolActual)) {
           setAutorizado(true);
         } else {
