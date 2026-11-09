@@ -66,7 +66,7 @@ export default function StoreDashboard() {
     setTimeout(() => setNotificacion({ visible: false, mensaje: '', tipo: 'exito' }), 3500);
   };
 
-const inicializarPanel = async () => {
+  const inicializarPanel = async () => {
     setCargando(true);
     try {
       // 1. Obtener usuario directamente desde la sesión activa de Supabase
@@ -238,8 +238,27 @@ const inicializarPanel = async () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!miEstablecimiento) {
-      mostrarNotificacion("Error: No se encontró tu tienda.", "error");
+
+    // Verificación y recuperación activa del establecimiento en caso de desincronización
+    let tiendaActiva = miEstablecimiento;
+    if (!tiendaActiva) {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data: tiendaRecuperada } = await supabase
+          .from('establecimientos')
+          .select('*')
+          .eq('propietario_id', user.id)
+          .maybeSingle();
+
+        if (tiendaRecuperada) {
+          tiendaActiva = tiendaRecuperada;
+          setMiEstablecimiento(tiendaRecuperada);
+        }
+      }
+    }
+
+    if (!tiendaActiva) {
+      mostrarNotificacion("Error: No se encontró tu tienda vinculada a esta cuenta.", "error");
       return;
     }
 
@@ -323,7 +342,7 @@ const inicializarPanel = async () => {
           .from('inventarios')
           .insert([{
             id: nuevoInventarioId,
-            establecimiento_id: miEstablecimiento.id,
+            establecimiento_id: tiendaActiva.id,
             pieza_id: nuevoPiezaId,
             stock: parseInt(formData.stock, 10),
             precio_lista: parseFloat(formData.precio_lista),
@@ -341,7 +360,7 @@ const inicializarPanel = async () => {
       setFormData({
         categoria: 'Motor', marca: '', nombre_comercial: '', descripcion: '', fabricante_original: '',
         nivel_calidad: 'Premium', tiempo_duracion: '', stock: 1, precio_lista: 0, precio_oferta: 0,
-        establecimiento_id: miEstablecimiento.id, tipo_vehiculo: 'Auto', marca_vehiculo: '', modelo: '', anio_vehiculo: '', imagen_url: '',
+        establecimiento_id: tiendaActiva.id, tipo_vehiculo: 'Auto', marca_vehiculo: '', modelo: '', anio_vehiculo: '', imagen_url: '',
         numero_parte: '', condicion: 'Nueva', garantia: 'Sin garantía'
       });
       inicializarPanel();
@@ -605,10 +624,9 @@ const inicializarPanel = async () => {
                           alt={item.pieza.nombre_comercial} 
                           className="w-16 h-16 object-cover rounded-lg border border-gray-100 bg-gray-50"
                           onError={(e) => {
-                            // Si la URL falla o da 403, oculta la imagen rota y muestra el recuadro por defecto
                             e.target.onerror = null; 
                             e.target.style.display = 'none';
-                            e.target.nextSibling.style.display = 'flex';
+                            if (e.target.nextSibling) e.target.nextSibling.style.display = 'flex';
                           }}
                         />
                       ) : null}
