@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import * as XLSX from 'xlsx';
-import { supabase } from '@/supabase'; // Ajusta la ruta a tu supabaseClient
+import { supabase } from '@/supabase'; // Ajusta la ruta si usas '../../supabase'
 
 export default function GestorExcel({ establecimientoId, onUploadSuccess }) {
   const [archivo, setArchivo] = useState(null);
@@ -31,9 +31,21 @@ export default function GestorExcel({ establecimientoId, onUploadSuccess }) {
       const workbook = XLSX.read(buffer, { type: 'array' });
       const sheetName = workbook.SheetNames[0];
       const sheet = workbook.Sheets[sheetName];
-      
-      // Convertir la hoja a JSON
-      const filas = XLSX.utils.sheet_to_json(sheet);
+
+      // 2. Detectar dinámicamente la fila donde empiezan los encabezados reales (saltando el logo)
+      const matrizFilas = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+      const indiceEncabezado = matrizFilas.findIndex((fila) =>
+        Array.isArray(fila) &&
+        fila.some((celda) =>
+          String(celda || '').toLowerCase().includes('nombre comercial')
+        )
+      );
+
+      // Si encuentra "Nombre Comercial" en la fila 2 (índice 1), lee desde ahí; si no, usa la fila 1 (índice 0)
+      const filas = XLSX.utils.sheet_to_json(sheet, {
+        range: indiceEncabezado >= 0 ? indiceEncabezado : 0,
+        defval: ''
+      });
 
       if (!filas || filas.length === 0) {
         setMensaje('El archivo Excel está vacío o no tiene el formato esperado.');
@@ -44,33 +56,58 @@ export default function GestorExcel({ establecimientoId, onUploadSuccess }) {
       let procesadosExitosos = 0;
       let erroresFila = 0;
 
-      // 2. Iterar filas e insertar en Supabase
+      // 3. Iterar filas e insertar en Supabase
       for (const fila of filas) {
-        // Mapear columnas según los encabezados de la plantilla Excel
-        const categoria = fila['categoria'] || fila['Categoría'] || 'Motor';
-        const marca = fila['marca'] || fila['Marca'] || '';
-        const nombre_comercial = fila['nombre_comercial'] || fila['Nombre Comercial'] || '';
-        const descripcion = fila['descripcion'] || fila['Descripción'] || '';
-        const nivel_calidad = fila['nivel_calidad'] || fila['Nivel Calidad'] || 'Premium';
-        const tipo_vehiculo = fila['tipo_vehiculo'] || fila['Tipo Vehículo'] || 'Auto';
-        const marca_vehiculo = fila['marca_vehiculo'] || fila['Marca Vehículo'] || '';
-        const modelo = fila['modelo'] || fila['Modelo'] || '';
-        const anio_vehiculo = String(fila['anio_vehiculo'] || fila['Año'] || '');
-        const numero_parte = String(fila['numero_parte'] || fila['Número de Parte'] || '');
-        const condicion = fila['condicion'] || fila['Condición'] || 'Nueva';
-        const garantia = fila['garantia'] || fila['Garantía'] || 'Sin garantía';
-        const imagen_url = fila['imagen_url'] || fila['URL Imagen'] || '';
+        // Normalizar llaves (eliminar espacios extra) para evitar fallos de lectura
+        const row = {};
+        for (const key of Object.keys(fila)) {
+          row[key.trim()] = fila[key];
+        }
 
-        const stock = parseInt(fila['stock'] || fila['Stock'] || 0, 10) || 0;
-        const precio_lista = parseFloat(fila['precio_lista'] || fila['Precio Lista'] || 0) || 0;
-        const precio_oferta = parseFloat(fila['precio_oferta'] || fila['Precio Oferta'] || 0) || 0;
+        // Mapear columnas exactamente como vienen en plantilla_autored.xlsx
+        const categoria =
+          row['Tipo de Pieza (Categoría)'] || row['Categoría'] || row['categoria'] || 'Motor';
+        const marca =
+          row['Marca de la Pieza'] || row['Marca'] || row['marca'] || '';
+        const nombre_comercial =
+          row['Nombre Comercial'] || row['nombre_comercial'] || '';
+        const numero_parte = String(
+          row['Número de Parte'] || row['Número de Parte / OEM'] || row['numero_parte'] || ''
+        );
+        const condicion =
+          row['Condición'] || row['condicion'] || 'Nueva';
+        const garantia =
+          row['Garantía'] || row['garantia'] || 'Sin garantía';
+        const tipo_vehiculo =
+          row['Tipo de Vehículo'] || row['Tipo Vehículo'] || row['tipo_vehiculo'] || 'Auto';
+        const marca_vehiculo =
+          row['Marca Vehículo'] || row['marca_vehiculo'] || '';
+        const modelo =
+          row['Modelo'] || row['modelo'] || '';
+        const anio_vehiculo = String(
+          row['Año'] || row['Año Vehículo'] || row['anio_vehiculo'] || ''
+        );
+        const descripcion =
+          row['Descripción'] || row['descripcion'] || '';
+        const nivel_calidad =
+          row['Nivel Calidad'] || row['Calidad'] || row['nivel_calidad'] || 'Premium';
+        const imagen_url =
+          row['URL Imagen'] || row['imagen_url'] || '';
 
-        // Saltar filas sin datos mínimos requeridos
+        const stock = parseInt(row['Stock'] || row['stock'] || 1, 10) || 0;
+        const precio_lista = parseFloat(
+          row['Precio Lista'] || row['Precio Compra'] || row['precio_lista'] || 0
+        ) || 0;
+        const precio_oferta = parseFloat(
+          row['Precio Oferta'] || row['Precio Venta'] || row['precio_oferta'] || 0
+        ) || 0;
+
+        // Saltar filas vacías o sin los datos mínimos requeridos
         if (!nombre_comercial.toString().trim() || !marca.toString().trim()) {
           continue;
         }
 
-        // Generar UUIDs antes de insertar
+        // Generar UUIDs garantizados antes de insertar
         const nuevoPiezaId = crypto.randomUUID();
         const nuevoInventarioId = crypto.randomUUID();
 
@@ -87,8 +124,8 @@ export default function GestorExcel({ establecimientoId, onUploadSuccess }) {
             tipo_vehiculo: tipo_vehiculo.toString().trim(),
             marca_vehiculo: marca_vehiculo.toString().trim(),
             modelo: modelo.toString().trim(),
-            anio_vehiculo,
-            numero_parte,
+            anio_vehiculo: anio_vehiculo.trim(),
+            numero_parte: numero_parte.trim(),
             condicion: condicion.toString().trim(),
             garantia: garantia.toString().trim(),
             imagen_url: imagen_url.toString().trim()
@@ -133,7 +170,7 @@ export default function GestorExcel({ establecimientoId, onUploadSuccess }) {
         
         if (onUploadSuccess) onUploadSuccess();
       } else {
-        setMensaje('Error: No se pudo registrar ninguna fila. Verifica que el Excel tenga las columnas "Nombre Comercial" y "Marca" llenas.');
+        setMensaje('Error: No se pudo registrar ninguna fila. Verifica que las columnas "Nombre Comercial" y "Marca de la Pieza" tengan datos.');
       }
 
     } catch (error) {
@@ -154,7 +191,7 @@ export default function GestorExcel({ establecimientoId, onUploadSuccess }) {
         <button 
           type="button"
           onClick={manejarDescarga}
-          className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-green-700 transition-all shadow-sm"
+          className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-green-700 transition-all shadow-sm cursor-pointer"
         >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
@@ -175,7 +212,7 @@ export default function GestorExcel({ establecimientoId, onUploadSuccess }) {
           type="button"
           onClick={subirArchivo}
           disabled={!archivo || cargando}
-          className="w-full sm:w-auto bg-autoblue text-white px-6 py-2 rounded-full font-bold text-sm hover:bg-blue-800 transition-all disabled:opacity-50 shadow-sm"
+          className="w-full sm:w-auto bg-autoblue text-white px-6 py-2 rounded-full font-bold text-sm hover:bg-blue-800 transition-all disabled:opacity-50 shadow-sm cursor-pointer"
         >
           {cargando ? 'Procesando...' : 'Subir Inventario'}
         </button>
