@@ -41,7 +41,7 @@ export default function GestorExcel({ establecimientoId, onUploadSuccess }) {
         )
       );
 
-      // Si encuentra "Nombre Comercial" en la fila 2 (índice 1), lee desde ahí; si no, usa la fila 1 (índice 0)
+      // Leer desde la fila de encabezados detectada
       const filas = XLSX.utils.sheet_to_json(sheet, {
         range: indiceEncabezado >= 0 ? indiceEncabezado : 0,
         defval: ''
@@ -58,13 +58,12 @@ export default function GestorExcel({ establecimientoId, onUploadSuccess }) {
 
       // 3. Iterar filas e insertar en Supabase
       for (const fila of filas) {
-        // Normalizar llaves (eliminar espacios extra) para evitar fallos de lectura
+        // Normalizar llaves (eliminar espacios extra)
         const row = {};
         for (const key of Object.keys(fila)) {
           row[key.trim()] = fila[key];
         }
 
-        // Mapear columnas exactamente como vienen en plantilla_autored.xlsx
         const categoria =
           row['Tipo de Pieza (Categoría)'] || row['Categoría'] || row['categoria'] || 'Motor';
         const marca =
@@ -102,8 +101,20 @@ export default function GestorExcel({ establecimientoId, onUploadSuccess }) {
           row['Precio Oferta'] || row['Precio Venta'] || row['precio_oferta'] || 0
         ) || 0;
 
+        const nombreLimpio = nombre_comercial.toString().trim();
+        const marcaLimpia = marca.toString().trim();
+        const numParteLimpio = numero_parte.trim();
+
         // Saltar filas vacías o sin los datos mínimos requeridos
-        if (!nombre_comercial.toString().trim() || !marca.toString().trim()) {
+        if (!nombreLimpio || !marcaLimpia) {
+          continue;
+        }
+
+        // 🟢 IGNORAR LA FILA DE EJEMPLO DE LA PLANTILLA OFICIAL (Fila 3: Bujía Iridium / BOS-992)
+        if (
+          nombreLimpio.toLowerCase() === 'bujía iridium' &&
+          numParteLimpio.toUpperCase() === 'BOS-992'
+        ) {
           continue;
         }
 
@@ -117,15 +128,15 @@ export default function GestorExcel({ establecimientoId, onUploadSuccess }) {
           .insert([{
             id: nuevoPiezaId,
             categoria: categoria.toString().trim(),
-            marca: marca.toString().trim(),
-            nombre_comercial: nombre_comercial.toString().trim(),
+            marca: marcaLimpia,
+            nombre_comercial: nombreLimpio,
             descripcion: descripcion.toString().trim(),
             nivel_calidad: nivel_calidad.toString().trim(),
             tipo_vehiculo: tipo_vehiculo.toString().trim(),
             marca_vehiculo: marca_vehiculo.toString().trim(),
             modelo: modelo.toString().trim(),
             anio_vehiculo: anio_vehiculo.trim(),
-            numero_parte: numero_parte.trim(),
+            numero_parte: numParteLimpio,
             condicion: condicion.toString().trim(),
             garantia: garantia.toString().trim(),
             imagen_url: imagen_url.toString().trim()
@@ -170,7 +181,7 @@ export default function GestorExcel({ establecimientoId, onUploadSuccess }) {
         
         if (onUploadSuccess) onUploadSuccess();
       } else {
-        setMensaje('Error: No se pudo registrar ninguna fila. Verifica que las columnas "Nombre Comercial" y "Marca de la Pieza" tengan datos.');
+        setMensaje('No se encontraron refacciones nuevas (la fila de ejemplo de la plantilla se omite automáticamente).');
       }
 
     } catch (error) {
@@ -186,7 +197,9 @@ export default function GestorExcel({ establecimientoId, onUploadSuccess }) {
       <div className="flex flex-wrap justify-between items-center gap-3">
         <div>
           <h3 className="font-bold text-gray-800 text-lg">Carga Masiva de Inventario</h3>
-          <p className="text-xs text-gray-500">Sube tus refacciones usando nuestra plantilla de Excel oficial.</p>
+          <p className="text-xs text-gray-500">
+            Sube tus refacciones usando nuestra plantilla oficial (la fila 3 de ejemplo se ignora automáticamente).
+          </p>
         </div>
         <button 
           type="button"
