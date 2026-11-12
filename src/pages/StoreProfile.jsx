@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
+import { supabase } from '../supabase';
 import ProductCard from '../components/ProductCard';
 
 export default function StoreProfile() {
@@ -7,7 +8,8 @@ export default function StoreProfile() {
   const navigate = useNavigate();
   
   const [inventarioTienda, setInventarioTienda] = useState([]);
-  const [nombreTienda, setNombreTienda] = useState('Cargando tienda...'); // Nuevo estado para el nombre
+  const [nombreTienda, setNombreTienda] = useState('Cargando tienda...');
+  const [datosTienda, setDatosTienda] = useState(null);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState(null);
 
@@ -36,52 +38,79 @@ export default function StoreProfile() {
     }
 
     const fetchDatosTienda = async () => {
-    try {
-        // Hacemos DOS peticiones al mismo tiempo: Inventario y Establecimientos
-        const [resInventario, resEstablecimientos] = await Promise.all([
-          fetch('https://backautored-production.up.railway.app/api/inventario/todos'),
-          fetch('https://backautored-production.up.railway.app/api/establecimientos/todos')
-        ]);
+      setCargando(true);
+      setError(null);
+      try {
+        // 1. OBTENEMOS LOS DATOS DE LA SUCURSAL DESDE SUPABASE
+        const { data: tiendaEncontrada, error: errTienda } = await supabase
+          .from('establecimientos')
+          .select('*')
+          .eq('id', id)
+          .single();
 
-        if (!resInventario.ok) throw new Error('Error al conectar con la base de datos');
-        
-        const dataInventario = await resInventario.json();
-        
-        // 🔥 1. PRIMERO BUSCAMOS LA TIENDA PARA SACAR SU TELÉFONO 🔥
-        let tiendaEncontrada = null;
-        if (resEstablecimientos.ok) {
-          const dataEstablecimientos = await resEstablecimientos.json();
-          tiendaEncontrada = dataEstablecimientos.find(tienda => tienda.id === id);
-          
-          if (tiendaEncontrada && tiendaEncontrada.nombre) {
-            setNombreTienda(tiendaEncontrada.nombre);
-          } else {
-            setNombreTienda(`Sucursal ${id.split('-')[0].toUpperCase()}`);
-          }
+        if (errTienda) throw new Error('No se pudo encontrar la información de esta sucursal');
+
+        setDatosTienda(tiendaEncontrada);
+        if (tiendaEncontrada && tiendaEncontrada.nombre) {
+          setNombreTienda(tiendaEncontrada.nombre);
+        } else {
+          setNombreTienda(`Sucursal ${id.split('-')[0].toUpperCase()}`);
         }
 
-        // 🔥 2. FILTRAMOS EL INVENTARIO Y LE "PEGAMOS" LOS DATOS DE LA TIENDA 🔥
-        const productosFiltrados = dataInventario
-          .filter(item => 
-            item.establecimiento_id === id && 
-            item.pieza && 
-            item.pieza.activo !== false // Ocultamos si el Admin la desactivó
-          )
-          .map(item => ({
+        // 2. OBTENEMOS EL INVENTARIO DE ESA TIENDA DESDE SUPABASE
+        const { data: dataInventario, error: errInv } = await supabase
+          .from('inventarios')
+          .select(`
+            *,
+            piezas (*)
+          `)
+          .eq('establecimiento_id', id)
+          .order('created_at', { ascending: false });
+
+        let productosProcesados = [];
+
+        if (errInv) {
+          // Respaldo por si el JOIN relacional falla
+          const { data: invSimple, error: errSimple } = await supabase
+            .from('inventarios')
+            .select('*')
+            .eq('establecimiento_id', id);
+
+          if (errSimple) throw new Error('Error al cargar el inventario de la tienda');
+
+          const { data: piezasSimple } = await supabase.from('piezas').select('*');
+
+          productosProcesados = (invSimple || []).map(item => ({
             ...item,
-            tiendaInfo: tiendaEncontrada // ¡Aquí le inyectamos el teléfono a ProductCard!
+            pieza: (piezasSimple || []).find(p => p.id === item.pieza_id) || {},
+            tiendaInfo: tiendaEncontrada
           }));
-        
+        } else {
+          productosProcesados = (dataInventario || []).map(item => ({
+            ...item,
+            pieza: Array.isArray(item.piezas) ? item.piezas[0] : (item.piezas || {}),
+            tiendaInfo: tiendaEncontrada
+          }));
+        }
+
+        // Filtramos piezas activas y les inyectamos tiendaInfo para ProductCard
+        const productosFiltrados = productosProcesados.filter(
+          item => item.pieza && item.pieza.activo !== false
+        );
+
         setInventarioTienda(productosFiltrados);
-        
-      } catch (error) {
-        setError(error.message);
+
+      } catch (err) {
+        console.error("Error en StoreProfile:", err);
+        setError(err.message || 'Error al conectar con la base de datos');
       } finally {
         setCargando(false);
       }
     };
 
-    fetchDatosTienda();
+    if (id) {
+      fetchDatosTienda();
+    }
   }, [id]);
 
   // --- LÓGICA DEL COMPARADOR ---
@@ -99,8 +128,8 @@ export default function StoreProfile() {
         mostrarAlerta("Solo puedes comparar hasta 3 piezas al mismo tiempo.");
         return;
       }
-      if (listaComparacion.length > 0 && listaComparacion[0].pieza.categoria !== producto.pieza.categoria) {
-        mostrarAlerta(`Solo puedes comparar piezas de la misma categoría (${listaComparacion[0].pieza.categoria}).`);
+      if (listaComparacion.length > 0 && listaComparacion[0].pieza?.categoria !== producto.pieza?.categoria) {
+        mostrarAlerta(`Solo puedes comparar piezas de la misma categoría (${listaComparacion[0].pieza?.categoria}).`);
         return;
       }
       setListaComparacion(prev => [...prev, producto]);
@@ -126,16 +155,27 @@ export default function StoreProfile() {
         <div className="absolute top-[-20%] right-[-10%] w-96 h-96 bg-white opacity-5 rounded-full blur-3xl"></div>
         <div className="max-w-7xl mx-auto relative z-10 flex flex-col md:flex-row items-center gap-6">
           {/* Avatar / Logo de la Tienda */}
-          <div className="w-24 h-24 bg-white rounded-full shadow-lg flex items-center justify-center text-autoblue font-black text-4xl border-4 border-white uppercase">
-            {inicialLogo}
+          <div className="w-24 h-24 bg-white rounded-full shadow-lg flex items-center justify-center text-autoblue font-black text-4xl border-4 border-white uppercase overflow-hidden">
+            {datosTienda?.logo_url ? (
+              <img src={datosTienda.logo_url} alt={nombreTienda} className="w-full h-full object-cover" />
+            ) : (
+              inicialLogo
+            )}
           </div>
           <div className="text-center md:text-left text-white">
             {/* Aquí ya mostramos el nombre real en grande */}
             <h1 className="text-3xl md:text-4xl font-black mb-2">{nombreTienda}</h1>
-            <p className="text-blue-100 font-medium flex items-center justify-center md:justify-start gap-2">
-              <svg className="w-5 h-5 text-yellow-400" fill="currentColor" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"></path></svg>
-              Vendedor Verificado AutoRed
-            </p>
+            <div className="flex flex-wrap items-center justify-center md:justify-start gap-4 text-blue-100 font-medium">
+              <p className="flex items-center gap-2">
+                <svg className="w-5 h-5 text-yellow-400" fill="currentColor" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"></path></svg>
+                Vendedor Verificado AutoRed
+              </p>
+              {datosTienda?.ciudad && (
+                <span className="text-sm text-blue-200">
+                  • {datosTienda.ciudad}{datosTienda.estado_rep ? `, ${datosTienda.estado_rep}` : ''}
+                </span>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -145,7 +185,7 @@ export default function StoreProfile() {
         <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 mb-8 flex justify-between items-center">
           <h2 className="text-lg font-black text-gray-900">Catálogo del Vendedor</h2>
           <span className="bg-gray-100 text-gray-600 px-3 py-1 rounded-lg text-sm font-bold">
-            {inventarioTienda.length} piezas publicadas
+            {inventarioTienda.length} {inventarioTienda.length === 1 ? 'pieza publicada' : 'piezas publicadas'}
           </span>
         </div>
 
@@ -193,7 +233,7 @@ export default function StoreProfile() {
               </div>
               <div>
                 <p className="font-bold text-gray-900 text-sm">Piezas listas para comparar</p>
-                <p className="text-xs text-gray-500 font-medium">Categoría: {listaComparacion[0].pieza.categoria}</p>
+                <p className="text-xs text-gray-500 font-medium">Categoría: {listaComparacion[0].pieza?.categoria}</p>
               </div>
             </div>
 

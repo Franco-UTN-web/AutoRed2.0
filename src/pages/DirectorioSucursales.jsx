@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
@@ -163,11 +164,34 @@ export default function DirectorioSucursales() {
                       <p className="text-xs text-gray-500 mt-1 font-medium line-clamp-2">
                         {calle} #{numero}, Col. {colonia}, {ciudad}, {estadoRep}. CP: {cp}
                       </p>
-                      <div className="mt-3 flex items-center gap-2 text-sm">
-                        <span className="flex items-center gap-1 text-autoblue font-bold">
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+
+                      {/* BOTONES DE ACCIÓN EN LA TARJETA */}
+                      <div className="mt-4 pt-3 border-t border-gray-100 flex items-center gap-2 text-xs">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            ubicarEnMapa(tienda);
+                          }}
+                          className="flex-1 flex items-center justify-center gap-1.5 bg-gray-100 hover:bg-gray-200 text-autoblue font-bold py-2 px-3 rounded-lg transition-colors"
+                        >
+                          <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path>
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                          </svg>
                           Ver en mapa
-                        </span>
+                        </button>
+
+                        <Link
+                          to={`/tienda/${tienda.id}`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="flex-1 flex items-center justify-center gap-1.5 bg-autoblue hover:bg-blue-900 text-white font-bold py-2 px-3 rounded-lg transition-colors shadow-sm"
+                        >
+                          <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"></path>
+                          </svg>
+                          Ver productos
+                        </Link>
                       </div>
                     </div>
                   );
@@ -222,12 +246,20 @@ export default function DirectorioSucursales() {
                       <div className="p-1 max-w-[200px] text-center">
                         <h4 className="font-black text-gray-900 text-sm">{t.nombre || 'Sucursal'}</h4>
                         <p className="text-xs text-gray-600 mt-1">{t.calle ? `${t.calle} #${t.numero || ''}` : 'Sin dirección registrada'}</p>
+                        
+                        <Link
+                          to={`/tienda/${t.id}`}
+                          className="mt-2 text-xs bg-autoblue hover:bg-blue-900 !text-white font-bold px-2 py-1.5 rounded block transition-colors"
+                        >
+                          Ver catálogo
+                        </Link>
+
                         {telefonoLimpio && (
                           <a 
                             href={`https://wa.me/${telefonoLimpio}`} 
                             target="_blank" 
                             rel="noopener noreferrer" 
-                            className="mt-2 text-xs bg-green-500 hover:bg-green-600 text-white font-bold px-2 py-1.5 rounded block transition-colors"
+                            className="mt-1.5 text-xs bg-green-500 hover:bg-green-600 !text-white font-bold px-2 py-1.5 rounded block transition-colors"
                           >
                             Contactar WhatsApp
                           </a>
