@@ -2,6 +2,9 @@ import { useNavigate, Link } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import { supabase } from '@/supabase';
 import GestorExcel from './components/GestorExcel';
+import EtiquetaQR from './components/EtiquetaQR';
+import EscanerCamara from './components/EscanerCamara';
+import FichaProducto from './components/FichaProducto';
 import useScanner from '../../../hooks/useScanner';
 
 // --- DICCIONARIOS LOCALES ---
@@ -22,6 +25,13 @@ const marcasRefacciones = [
   "Dai", "Fritec", "Gates", "Genérica", "Gonher", "KYB", 
   "LUK", "NGK", "Roshfrans", "Valeo", "Wagner", "Mobil", "Purolator"
 ];
+
+// Un QR de AutoRed trae el id (UUID) del registro de inventarios, solo o dentro de la URL /producto/<id>
+const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+const extraerIdInventario = (texto) => {
+  const m = String(texto || '').match(UUID_RE);
+  return m ? m[0].toLowerCase() : null;
+};
 
 export default function StoreDashboard() {
   
@@ -47,6 +57,9 @@ export default function StoreDashboard() {
   const [imagenSeleccionada, setImagenSeleccionada] = useState(null);
   const [idEdicion, setIdEdicion] = useState(null);
   const [modoEscaneo, setModoEscaneo] = useState('buscar'); // 'buscar' | 'entrada' | 'salida'
+  const [qrEtiqueta, setQrEtiqueta] = useState(null);   // pieza cuya etiqueta QR se muestra
+  const [camaraAbierta, setCamaraAbierta] = useState(false);
+  const [fichaId, setFichaId] = useState(null);           // id de inventarios que se muestra en la ficha
 
   const navigate = useNavigate();
 
@@ -217,13 +230,19 @@ export default function StoreDashboard() {
     if (!codigo || !miEstablecimiento) return;
     const c = codigo.toLowerCase();
 
+    const idQR = extraerIdInventario(codigo);
     const existente = inventarioLocal.find(item =>
+      (idQR && item.id === idQR) ||
       item.pieza?.codigo_barras?.toLowerCase() === c ||
       item.pieza?.numero_parte?.toLowerCase() === c
     );
 
     // 1) Formulario abierto: el código se guarda en el campo "Código de Barras"
     if (showForm) {
+      if (idQR) {
+        mostrarNotificacion('Ese QR es una etiqueta de AutoRed, no un código de barras del fabricante.', 'error');
+        return;
+      }
       setFormData(prev => ({ ...prev, codigo_barras: codigo }));
       if (existente && existente.id !== idEdicion) {
         mostrarNotificacion(`Ese código ya existe en tu inventario: ${existente.pieza?.nombre_comercial}`, 'error');
@@ -232,6 +251,9 @@ export default function StoreDashboard() {
       }
       return;
     }
+
+    // QR de otra tienda (o de una pieza que ya no está en tu inventario): mostramos su ficha
+    if (idQR && !existente) { setFichaId(idQR); return; }
 
     // 2) Formulario cerrado y la pieza ya existe: según el modo, ajustamos stock o abrimos su edición
     if (existente) {
@@ -262,7 +284,29 @@ export default function StoreDashboard() {
   };
 
   // Solo escucha el escáner cuando estás en la pestaña de inventario local
-  useScanner(manejarEscaneo, { enabled: activeTab === 'catalog' && !!miEstablecimiento });
+  useScanner(manejarEscaneo, {
+    enabled: activeTab === 'catalog' && !!miEstablecimiento && !camaraAbierta && !fichaId && !qrEtiqueta
+  });
+
+  // Resultado de la cámara: QR de AutoRed (id o URL con el id) o código de barras del fabricante
+  const manejarResultadoCamara = (texto) => {
+    setCamaraAbierta(false);
+    const idQR = extraerIdInventario(texto);
+    if (idQR) {
+      setFichaId(idQR); // la ficha consulta directo a Supabase, sea de tu tienda o de otra
+      return;
+    }
+    const c = String(texto).trim().toLowerCase();
+    const existente = inventarioLocal.find(item =>
+      item.pieza?.codigo_barras?.trim().toLowerCase() === c ||
+      item.pieza?.numero_parte?.trim().toLowerCase() === c
+    );
+    if (existente) {
+      setFichaId(existente.id);
+    } else {
+      mostrarNotificacion(`El código ${String(texto).trim()} no está en tu inventario.`, 'error');
+    }
+  };
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -445,6 +489,12 @@ export default function StoreDashboard() {
         if (errProd) throw errProd;
 
         mostrarNotificacion("¡Refacción guardada exitosamente!");
+        setQrEtiqueta({
+          id: nuevoInventarioId,
+          nombre: formData.nombre_comercial,
+          marca: formData.marca,
+          numero_parte: formData.numero_parte
+        });
       }
 
       setShowForm(false);
@@ -587,6 +637,13 @@ export default function StoreDashboard() {
                     {modoEscaneo === 'entrada' ? 'Cada escaneo suma 1 al stock de la pieza.' : 'Cada escaneo resta 1 al stock (venta en mostrador).'}
                   </span>
                 )}
+                <button
+                  type="button"
+                  onClick={() => setCamaraAbierta(true)}
+                  className="sm:ml-auto border-2 border-autoblue text-autoblue hover:bg-blue-50 px-3 py-1.5 rounded-lg font-bold text-xs cursor-pointer"
+                >
+                  Escanear con cámara
+                </button>
               </div>
             )}
 
@@ -807,6 +864,9 @@ export default function StoreDashboard() {
                         <p className="font-black text-red-600 text-lg">${item.precio_oferta}</p>
                       </div>
                       <div className="flex gap-2">
+                        <button onClick={() => setQrEtiqueta({ id: item.id, nombre: item.pieza?.nombre_comercial, marca: item.pieza?.marca, numero_parte: item.pieza?.numero_parte })} className="text-gray-700 bg-white border border-gray-200 hover:bg-gray-50 font-bold px-3 py-1.5 rounded-lg text-xs transition-colors flex items-center gap-1 cursor-pointer">
+                          QR
+                        </button>
                         <button onClick={() => cargarDatosParaEdicion(item)} className="text-blue-600 bg-white border border-gray-200 hover:bg-blue-50 font-bold px-3 py-1.5 rounded-lg text-xs transition-colors flex items-center gap-1 cursor-pointer">
                           Editar
                         </button>
@@ -895,6 +955,21 @@ export default function StoreDashboard() {
             {notificacion.mensaje}
           </div>
         </div>
+
+        {qrEtiqueta && <EtiquetaQR item={qrEtiqueta} onCerrar={() => setQrEtiqueta(null)} />}
+
+        {camaraAbierta && (
+          <EscanerCamara onResultado={manejarResultadoCamara} onCerrar={() => setCamaraAbierta(false)} />
+        )}
+
+        {fichaId && (
+          <FichaProducto
+            inventarioId={fichaId}
+            miEstablecimientoId={miEstablecimiento?.id}
+            onEditar={(item) => { setFichaId(null); setActiveTab('catalog'); cargarDatosParaEdicion(item); }}
+            onCerrar={() => setFichaId(null)}
+          />
+        )}
 
         {modalEliminar.visible && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black bg-opacity-60 backdrop-blur-sm transition-opacity">
