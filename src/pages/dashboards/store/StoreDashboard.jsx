@@ -2,6 +2,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import { supabase } from '@/supabase';
 import GestorExcel from './components/GestorExcel';
+import useScanner from '../../../hooks/useScanner';
 
 // --- DICCIONARIOS LOCALES ---
 const vehiculosDb = {
@@ -58,7 +59,7 @@ export default function StoreDashboard() {
     fabricante_original: '', nivel_calidad: 'Premium', tiempo_duracion: '',
     stock: 1, precio_lista: 0, precio_oferta: 0, establecimiento_id: '',
     tipo_vehiculo: 'Auto', marca_vehiculo: '', modelo: '', anio_vehiculo: '', imagen_url: '',
-    numero_parte: '', condicion: 'Nueva', garantia: 'Sin garantía'
+    numero_parte: '', codigo_barras: '', condicion: 'Nueva', garantia: 'Sin garantía'
   });
 
   const mostrarNotificacion = (mensaje, tipo = 'exito') => {
@@ -178,12 +179,59 @@ export default function StoreDashboard() {
       anio_vehiculo: item.pieza?.anio_vehiculo || '', 
       imagen_url: item.pieza?.imagen_url || '',
       numero_parte: item.pieza?.numero_parte || '', 
+      codigo_barras: item.pieza?.codigo_barras || '',
       condicion: item.pieza?.condicion || 'Nueva',
       garantia: item.pieza?.garantia || 'Sin garantía'
     });
     setShowForm(true);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
+
+  // --- ESCÁNER DE CÓDIGO DE BARRAS (lector USB/Bluetooth en modo teclado) ---
+  const manejarEscaneo = (codigoCrudo) => {
+    const codigo = codigoCrudo.trim();
+    if (!codigo || !miEstablecimiento) return;
+    const c = codigo.toLowerCase();
+
+    const existente = inventarioLocal.find(item =>
+      item.pieza?.codigo_barras?.toLowerCase() === c ||
+      item.pieza?.numero_parte?.toLowerCase() === c
+    );
+
+    // 1) Formulario abierto: el código se guarda en el campo "Código de Barras"
+    if (showForm) {
+      setFormData(prev => ({ ...prev, codigo_barras: codigo }));
+      if (existente && existente.id !== idEdicion) {
+        mostrarNotificacion(`Ese código ya existe en tu inventario: ${existente.pieza?.nombre_comercial}`, 'error');
+      } else {
+        mostrarNotificacion(`Código capturado: ${codigo}`);
+      }
+      return;
+    }
+
+    // 2) Formulario cerrado y la pieza ya existe: abrimos su edición
+    if (existente) {
+      mostrarNotificacion(`Pieza encontrada: ${existente.pieza?.nombre_comercial}`);
+      cargarDatosParaEdicion(existente);
+      return;
+    }
+
+    // 3) Formulario cerrado y código desconocido: abrimos un alta nueva con el código precargado
+    setIdEdicion(null);
+    setImagenSeleccionada(null);
+    setFormData({
+      categoria: 'Motor', marca: '', nombre_comercial: '', descripcion: '', fabricante_original: '',
+      nivel_calidad: 'Premium', tiempo_duracion: '', stock: 1, precio_lista: 0, precio_oferta: 0,
+      establecimiento_id: miEstablecimiento.id, tipo_vehiculo: 'Auto', marca_vehiculo: '', modelo: '', anio_vehiculo: '', imagen_url: '',
+      numero_parte: '', codigo_barras: codigo, condicion: 'Nueva', garantia: 'Sin garantía'
+    });
+    setShowForm(true);
+    mostrarNotificacion(`Código nuevo (${codigo}). Completa los datos de la pieza.`);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  // Solo escucha el escáner cuando estás en la pestaña de inventario local
+  useScanner(manejarEscaneo, { enabled: activeTab === 'catalog' && !!miEstablecimiento });
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -289,6 +337,7 @@ export default function StoreDashboard() {
               anio_vehiculo: formData.anio_vehiculo,
               imagen_url: urlFinalImagen,
               numero_parte: formData.numero_parte,
+              codigo_barras: formData.codigo_barras?.trim() || null,
               condicion: formData.condicion,
               garantia: formData.garantia
             })
@@ -331,6 +380,7 @@ export default function StoreDashboard() {
             anio_vehiculo: formData.anio_vehiculo,
             imagen_url: urlFinalImagen,
             numero_parte: formData.numero_parte,
+            codigo_barras: formData.codigo_barras?.trim() || null,
             condicion: formData.condicion,
             garantia: formData.garantia
           }]);
@@ -361,7 +411,7 @@ export default function StoreDashboard() {
         categoria: 'Motor', marca: '', nombre_comercial: '', descripcion: '', fabricante_original: '',
         nivel_calidad: 'Premium', tiempo_duracion: '', stock: 1, precio_lista: 0, precio_oferta: 0,
         establecimiento_id: tiendaActiva.id, tipo_vehiculo: 'Auto', marca_vehiculo: '', modelo: '', anio_vehiculo: '', imagen_url: '',
-        numero_parte: '', condicion: 'Nueva', garantia: 'Sin garantía'
+        numero_parte: '', codigo_barras: '', condicion: 'Nueva', garantia: 'Sin garantía'
       });
       inicializarPanel();
     } catch (error) {
@@ -454,7 +504,13 @@ export default function StoreDashboard() {
         {activeTab === 'catalog' && (
           <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm animate-fade-in">
             <div className="flex justify-between items-center mb-6">
-              <h3 className="font-bold text-lg text-gray-900">Gestión de Stock</h3>
+              <div>
+                <h3 className="font-bold text-lg text-gray-900">Gestión de Stock</h3>
+                <p className="text-xs text-gray-500 mt-0.5 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-green-500 inline-block"></span>
+                  Lector de códigos activo: escanea una caja para buscar la pieza o registrar una nueva
+                </p>
+              </div>
               <button onClick={() => {
                 setShowForm(!showForm);
                 if(showForm) setIdEdicion(null);
@@ -527,6 +583,20 @@ export default function StoreDashboard() {
                         <option value="1 año">1 año (Fábrica)</option>
                       </select>
                     </div>
+                  </div>
+                  {/* CÓDIGO DE BARRAS / QR (se llena solo al escanear) */}
+                  <div className="mt-4">
+                    <label className="block text-xs font-black uppercase text-gray-500 mb-1">Código de Barras / QR <span className="lowercase font-normal text-autoblue">(Opcional — escanea la caja con el lector)</span></label>
+                    <input
+                      type="text"
+                      name="codigo_barras"
+                      data-scanner="true"
+                      value={formData.codigo_barras}
+                      onChange={handleInputChange}
+                      onKeyDown={(e) => { if (e.key === 'Enter') e.preventDefault(); }}
+                      className="w-full bg-white border border-gray-200 rounded-lg p-2.5 text-sm font-mono"
+                      placeholder="Escanea el código de la caja"
+                    />
                   </div>
                 </div>
 
