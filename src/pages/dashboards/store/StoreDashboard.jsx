@@ -1,7 +1,8 @@
 import { useNavigate, Link } from 'react-router-dom';
 import { useState, useEffect } from 'react';
-import { supabase } from '@/supabase';
 import GestorExcel from './components/GestorExcel';
+import useScanner from '../../../hooks/useScanner';
+import { supabase } from '../../../supabase';
 
 // --- DICCIONARIOS LOCALES ---
 const vehiculosDb = {
@@ -19,7 +20,7 @@ const aniosDisponibles = ["Todos los años", ...Array.from(new Array(37), (val, 
 const marcasRefacciones = [
   "ACDelco", "Bardahl", "Boge", "Bosch", "Brembo", "Castrol", 
   "Dai", "Fritec", "Gates", "Genérica", "Gonher", "KYB", 
-  "LUK", "NGK", "Roshfrans", "Valeo", "Wagner", "Mobil", "Purolator"
+  "LUK", "NGK", "Roshfrans", "Valeo", "Wagner", "Mobil" , "Purolator"
 ];
 
 export default function StoreDashboard() {
@@ -41,10 +42,10 @@ export default function StoreDashboard() {
   const [showForm, setShowForm] = useState(false);
   const [inventarioLocal, setInventarioLocal] = useState([]);
   const [inventarioGlobal, setInventarioGlobal] = useState([]);
-  const [cotizaciones, setCotizaciones] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [imagenSeleccionada, setImagenSeleccionada] = useState(null);
   const [idEdicion, setIdEdicion] = useState(null);
+  
 
   const navigate = useNavigate();
 
@@ -52,13 +53,14 @@ export default function StoreDashboard() {
   const [notificacion, setNotificacion] = useState({ visible: false, mensaje: '', tipo: 'exito' });
   const [modalEliminar, setModalEliminar] = useState({ visible: false, idProducto: null });
 
-  // 4. ESTADO DEL FORMULARIO
+  // 4. ESTADO DEL FORMULARIO (CAMPOS EXTENDIDOS PARA COMPARADOR)
   const [formData, setFormData] = useState({
     categoria: 'Motor', marca: '', nombre_comercial: '', descripcion: '',
     fabricante_original: '', nivel_calidad: 'Premium', tiempo_duracion: '',
     stock: 1, precio_lista: 0, precio_oferta: 0, establecimiento_id: '',
     tipo_vehiculo: 'Auto', marca_vehiculo: '', modelo: '', anio_vehiculo: '', imagen_url: '',
-    numero_parte: '', condicion: 'Nueva', garantia: 'Sin garantía'
+    // Nuevas columnas estructurales
+    numero_parte: '', codigo_barras: '', condicion: 'Nueva', garantia: ''
   });
 
   const mostrarNotificacion = (mensaje, tipo = 'exito') => {
@@ -66,90 +68,48 @@ export default function StoreDashboard() {
     setTimeout(() => setNotificacion({ visible: false, mensaje: '', tipo: 'exito' }), 3500);
   };
 
-  const inicializarPanel = async () => {
-    setCargando(true);
+  // El backend de Java no conoce la columna codigo_barras, así que la leemos directo de Supabase
+  // y la mezclamos en cada pieza (item.pieza.codigo_barras). Si falla, el panel sigue funcionando sin ella.
+  const agregarCodigosDeBarras = async (items, tiendaId) => {
     try {
-      // 1. Obtener usuario directamente desde la sesión activa de Supabase
-      const { data: { user } } = await supabase.auth.getUser();
+      const { data, error } = await supabase
+        .from('inventarios')
+        .select('id, piezas(codigo_barras)')
+        .eq('establecimiento_id', tiendaId);
+      if (error || !data) return items;
+      const mapa = new Map(data.map(r => {
+        const pz = Array.isArray(r.piezas) ? r.piezas[0] : r.piezas;
+        return [r.id, pz?.codigo_barras || ''];
+      }));
+      return items.map(it => ({ ...it, pieza: { ...it.pieza, codigo_barras: mapa.get(it.id) || '' } }));
+    } catch {
+      return items;
+    }
+  };
 
-      let currentUserId = user?.id;
-      if (!currentUserId && usuarioLogueado) {
-        currentUserId = usuarioLogueado.id || usuarioLogueado.user_id;
-      }
+  const inicializarPanel = async () => {
+    if (!usuarioLogueado) return;
+    try {
+      const resEstablecimientos = await fetch('https://backautored-production.up.railway.app/api/establecimientos/todos');
+      if (resEstablecimientos.ok) {
+        const tiendas = await resEstablecimientos.json();
+        const miTienda = tiendas.find(t => t.propietario_id === usuarioLogueado.id);
+        
+        if (miTienda) {
+          setMiEstablecimiento(miTienda);
+          setFormData(prev => ({ ...prev, establecimiento_id: miTienda.id }));
 
-      if (!currentUserId) {
-        setCargando(false);
-        return;
-      }
+          const [resLocal, resGlobal] = await Promise.all([
+            fetch(`https://backautored-production.up.railway.app/api/inventario/tienda/${miTienda.id}`),
+            fetch('https://backautored-production.up.railway.app/api/inventario/todos')
+          ]);
 
-      // 2. Obtener el establecimiento del propietario activo
-      const { data: tienda, error: errTienda } = await supabase
-        .from('establecimientos')
-        .select('*')
-        .eq('propietario_id', currentUserId)
-        .maybeSingle();
-
-      if (errTienda) console.error("Error obteniendo establecimiento:", errTienda.message);
-
-      if (tienda) {
-        setMiEstablecimiento(tienda);
-        setFormData(prev => ({ ...prev, establecimiento_id: tienda.id }));
-
-        // 3. Cargar inventario local con fallback defensivo
-        const { data: localData, error: localErr } = await supabase
-          .from('inventarios')
-          .select(`
-            *,
-            piezas (*)
-          `)
-          .eq('establecimiento_id', tienda.id);
-
-        if (localErr) {
-          console.warn("Error en join de inventario local, ejecutando consulta de respaldo:", localErr.message);
-          const { data: fallbackData } = await supabase
-            .from('inventarios')
-            .select('*')
-            .eq('establecimiento_id', tienda.id);
-            
-          setInventarioLocal(fallbackData || []);
-        } else {
-          // Normalizar el objeto pieza para la interfaz
-          const inventarioNormalizado = (localData || []).map(item => ({
-            ...item,
-            pieza: Array.isArray(item.piezas) ? item.piezas[0] : (item.piezas || item.pieza || {})
-          }));
-          setInventarioLocal(inventarioNormalizado);
+          if (resLocal.ok) setInventarioLocal(await agregarCodigosDeBarras(await resLocal.json(), miTienda.id));
+          if (resGlobal.ok) setInventarioGlobal(await resGlobal.json());
         }
-
-        // 4. Cargar inventario global
-        const { data: globalData } = await supabase
-          .from('inventarios')
-          .select(`
-            *,
-            piezas (*),
-            establecimientos (*)
-          `);
-
-        if (globalData) {
-          const globalNormalizado = globalData.map(item => ({
-            ...item,
-            pieza: Array.isArray(item.piezas) ? item.piezas[0] : (item.piezas || item.pieza || {}),
-            establecimiento: Array.isArray(item.establecimientos) ? item.establecimientos[0] : (item.establecimientos || item.establecimiento || {})
-          }));
-          setInventarioGlobal(globalNormalizado);
-        }
-
-        // 5. Cargar cotizaciones
-        const { data: cotRes } = await supabase
-          .from('cotizaciones')
-          .select('*')
-          .eq('establecimiento_id', tienda.id);
-
-        setCotizaciones(cotRes || []);
       }
     } catch (error) {
-      console.error("Error al inicializar panel de mostrador:", error);
-      mostrarNotificacion("Error al conectar con Supabase", "error");
+      console.error("Error al inicializar panel:", error);
     } finally {
       setCargando(false);
     }
@@ -163,27 +123,67 @@ export default function StoreDashboard() {
     setIdEdicion(item.id);
     setImagenSeleccionada(null);
     setFormData({
-      categoria: item.pieza?.categoria || 'Motor', 
-      marca: item.pieza?.marca || '',
-      nombre_comercial: item.pieza?.nombre_comercial || '', 
-      descripcion: item.pieza?.descripcion || '',
-      nivel_calidad: item.pieza?.nivel_calidad || 'Premium', 
-      stock: item.stock || 1,
-      precio_lista: item.precio_lista || 0, 
-      precio_oferta: item.precio_oferta || 0,
-      establecimiento_id: miEstablecimiento?.id, 
-      tipo_vehiculo: item.pieza?.tipo_vehiculo || 'Auto',
-      marca_vehiculo: item.pieza?.marca_vehiculo || '', 
-      modelo: item.pieza?.modelo || '',
-      anio_vehiculo: item.pieza?.anio_vehiculo || '', 
-      imagen_url: item.pieza?.imagen_url || '',
-      numero_parte: item.pieza?.numero_parte || '', 
+      categoria: item.pieza?.categoria || 'Motor', marca: item.pieza?.marca || '',
+      nombre_comercial: item.pieza?.nombre_comercial || '', descripcion: item.pieza?.descripcion || '',
+      nivel_calidad: item.pieza?.nivel_calidad || 'Premium', stock: item.stock || 1,
+      precio_lista: item.precio_lista || 0, precio_oferta: item.precio_oferta || 0,
+      establecimiento_id: miEstablecimiento?.id, tipo_vehiculo: item.pieza?.tipo_vehiculo || 'Auto',
+      marca_vehiculo: item.pieza?.marca_vehiculo || '', modelo: item.pieza?.modelo || '',
+      anio_vehiculo: item.pieza?.anio_vehiculo || '', imagen_url: item.pieza?.imagen_url || '',
+      // Mapeo de nuevos campos al editar
+      numero_parte: item.pieza?.numero_parte || '', codigo_barras: item.pieza?.codigo_barras || '',
       condicion: item.pieza?.condicion || 'Nueva',
-      garantia: item.pieza?.garantia || 'Sin garantía'
+      garantia: 'Sin garantía'
     });
     setShowForm(true);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
+
+  // --- ESCÁNER DE CÓDIGO DE BARRAS (lector USB/Bluetooth en modo teclado) ---
+  const manejarEscaneo = (codigoCrudo) => {
+    const codigo = codigoCrudo.trim();
+    if (!codigo || !miEstablecimiento) return;
+    const c = codigo.toLowerCase();
+
+    const existente = inventarioLocal.find(item =>
+      item.pieza?.codigo_barras?.toLowerCase() === c ||
+      item.pieza?.numero_parte?.toLowerCase() === c
+    );
+
+    // 1) Formulario abierto: el código se guarda en el campo "Código de Barras"
+    if (showForm) {
+      setFormData(prev => ({ ...prev, codigo_barras: codigo }));
+      if (existente && existente.id !== idEdicion) {
+        mostrarNotificacion(`Ese código ya existe en tu inventario: ${existente.pieza?.nombre_comercial}`, 'error');
+      } else {
+        mostrarNotificacion(`Código capturado: ${codigo}`);
+      }
+      return;
+    }
+
+    // 2) Formulario cerrado y la pieza ya existe: abrimos su edición
+    if (existente) {
+      mostrarNotificacion(`Pieza encontrada: ${existente.pieza?.nombre_comercial}`);
+      cargarDatosParaEdicion(existente);
+      return;
+    }
+
+    // 3) Formulario cerrado y código desconocido: abrimos un alta nueva con el código precargado
+    setIdEdicion(null);
+    setImagenSeleccionada(null);
+    setFormData({
+      categoria: 'Motor', marca: '', nombre_comercial: '', descripcion: '', fabricante_original: '',
+      nivel_calidad: 'Premium', tiempo_duracion: '', stock: 1, precio_lista: 0, precio_oferta: 0,
+      establecimiento_id: miEstablecimiento.id, tipo_vehiculo: 'Auto', marca_vehiculo: '', modelo: '', anio_vehiculo: '', imagen_url: '',
+      numero_parte: '', codigo_barras: codigo, condicion: 'Nueva', garantia: ''
+    });
+    setShowForm(true);
+    mostrarNotificacion(`Código nuevo (${codigo}). Completa los datos de la pieza.`);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  // Solo escucha el escáner cuando estás en la pestaña de inventario local
+  useScanner(manejarEscaneo, { enabled: activeTab === 'catalog' && !!miEstablecimiento });
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -202,168 +202,115 @@ export default function StoreDashboard() {
     const id = modalEliminar.idProducto;
     setModalEliminar({ visible: false, idProducto: null });
     try {
-      const { error } = await supabase
-        .from('inventarios')
-        .delete()
-        .eq('id', id);
-
-      if (error) throw error;
-
-      mostrarNotificacion("Producto eliminado del inventario.");
-      inicializarPanel();
+      const response = await fetch(`https://backautored-production.up.railway.app/api/inventario/eliminar/${id}`, { method: 'DELETE' });
+      if (response.ok) {
+        mostrarNotificacion("Producto eliminado del inventario.");
+        inicializarPanel();
+      } else {
+        mostrarNotificacion("Error al intentar eliminar el producto.", "error");
+      }
     } catch (error) {
-      mostrarNotificacion("Error al eliminar producto: " + error.message, "error");
+      mostrarNotificacion("Error de conexión: " + error.message, "error");
     }
   };
 
   const subirImagenASupabase = async (file) => {
-    const fileExt = file.name.split('.').pop();
-    const fileName = `${Date.now()}_${Math.random().toString(36).substring(2)}.${fileExt}`;
-    const filePath = `refacciones/${fileName}`;
+    // 1. Empaquetamos el archivo físico
+    const formData = new FormData();
+    formData.append('file', file);
+    
+    // 2. Se lo enviamos a nuestro backend de Java indicando la carpeta
+    const response = await fetch('https://backautored-production.up.railway.app/api/archivos/subir?carpeta=refaccionarias', {
+      method: 'POST',
+      body: formData 
+      // Nota: No agregamos 'Content-Type', el navegador lo pone automáticamente con FormData
+    });
 
-    const { error: uploadError } = await supabase.storage
-      .from('documentos')
-      .upload(filePath, file);
-
-    if (uploadError) {
-      throw uploadError;
+    if (!response.ok) {
+      throw new Error("El servidor de Java rechazó la imagen.");
     }
+    
+    // 3. Java nos devuelve la URL pública lista para usarse
+    const data = await response.json();
+    return data.url; 
+  };
 
-    const { data } = supabase.storage
-      .from('documentos')
-      .getPublicUrl(filePath);
+  // Guarda el código de barras directo en Supabase (tabla piezas), sin pasar por el backend de Java
+  const guardarCodigoBarras = async (codigo, idInventario, numeroParte) => {
+    try {
+      const valor = codigo?.trim() || null;
+      let piezaId = null;
 
-    return data.publicUrl;
+      if (idInventario) {
+        // Edición: sabemos el id del inventario, de ahí sacamos la pieza
+        const { data } = await supabase.from('inventarios').select('pieza_id').eq('id', idInventario).maybeSingle();
+        piezaId = data?.pieza_id;
+      } else {
+        // Alta nueva: buscamos la pieza recién creada en esta tienda por su número de parte
+        const { data } = await supabase
+          .from('inventarios')
+          .select('pieza_id, piezas!inner(numero_parte)')
+          .eq('establecimiento_id', miEstablecimiento.id)
+          .eq('piezas.numero_parte', numeroParte)
+          .order('created_at', { ascending: false })
+          .limit(1);
+        piezaId = data?.[0]?.pieza_id;
+      }
+      if (!piezaId) return false;
+
+      const { error } = await supabase.from('piezas').update({ codigo_barras: valor }).eq('id', piezaId);
+      return !error;
+    } catch {
+      return false;
+    }
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-
-    // Verificación y recuperación activa del establecimiento en caso de desincronización
-    let tiendaActiva = miEstablecimiento;
-    if (!tiendaActiva) {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        const { data: tiendaRecuperada } = await supabase
-          .from('establecimientos')
-          .select('*')
-          .eq('propietario_id', user.id)
-          .maybeSingle();
-
-        if (tiendaRecuperada) {
-          tiendaActiva = tiendaRecuperada;
-          setMiEstablecimiento(tiendaRecuperada);
-        }
-      }
-    }
-
-    if (!tiendaActiva) {
-      mostrarNotificacion("Error: No se encontró tu tienda vinculada a esta cuenta.", "error");
+    if (!miEstablecimiento) {
+      mostrarNotificacion("Error: No se encontró tu tienda.", "error");
       return;
     }
 
     try {
       let urlFinalImagen = formData.imagen_url;
       if (imagenSeleccionada) {
-        mostrarNotificacion("Subiendo imagen a Supabase Storage...");
+        mostrarNotificacion("Subiendo imagen a la nube...");
         urlFinalImagen = await subirImagenASupabase(imagenSeleccionada);
       }
-
-      if (idEdicion) {
-        // ACTUALIZACIÓN DE PRODUCTO EXISTENTE
-        const productoEdicion = inventarioLocal.find(p => p.id === idEdicion);
-        
-        if (productoEdicion && productoEdicion.pieza_id) {
-          // 1. Actualizar datos en la tabla piezas
-          const { error: errPieza } = await supabase
-            .from('piezas')
-            .update({
-              categoria: formData.categoria,
-              marca: formData.marca,
-              nombre_comercial: formData.nombre_comercial,
-              descripcion: formData.descripcion,
-              nivel_calidad: formData.nivel_calidad,
-              tipo_vehiculo: formData.tipo_vehiculo,
-              marca_vehiculo: formData.marca_vehiculo,
-              modelo: formData.modelo,
-              anio_vehiculo: formData.anio_vehiculo,
-              imagen_url: urlFinalImagen,
-              numero_parte: formData.numero_parte,
-              condicion: formData.condicion,
-              garantia: formData.garantia
-            })
-            .eq('id', productoEdicion.pieza_id);
-
-          if (errPieza) throw errPieza;
-        }
-
-        // 2. Actualizar datos en la tabla inventarios
-        const { error: errProd } = await supabase
-          .from('inventarios')
-          .update({
-            stock: formData.stock,
-            precio_lista: formData.precio_lista,
-            precio_oferta: formData.precio_oferta
-          })
-          .eq('id', idEdicion);
-
-        if (errProd) throw errProd;
-
-        mostrarNotificacion("¡Producto actualizado correctamente!");
-      } else {
-        // ALTA DE NUEVO PRODUCTO CON UUIDs GARANTIZADOS
-        const nuevoPiezaId = crypto.randomUUID();
-        const nuevoInventarioId = crypto.randomUUID();
-
-        // 1. Crear registro en la tabla piezas
-        const { error: errPieza } = await supabase
-          .from('piezas')
-          .insert([{
-            id: nuevoPiezaId,
-            categoria: formData.categoria,
-            marca: formData.marca,
-            nombre_comercial: formData.nombre_comercial,
-            descripcion: formData.descripcion,
-            nivel_calidad: formData.nivel_calidad,
-            tipo_vehiculo: formData.tipo_vehiculo,
-            marca_vehiculo: formData.marca_vehiculo,
-            modelo: formData.modelo,
-            anio_vehiculo: formData.anio_vehiculo,
-            imagen_url: urlFinalImagen,
-            numero_parte: formData.numero_parte,
-            condicion: formData.condicion,
-            garantia: formData.garantia
-          }]);
-
-        if (errPieza) throw errPieza;
-
-        // 2. Crear relación en la tabla inventarios
-        const { error: errProd } = await supabase
-          .from('inventarios')
-          .insert([{
-            id: nuevoInventarioId,
-            establecimiento_id: tiendaActiva.id,
-            pieza_id: nuevoPiezaId,
-            stock: parseInt(formData.stock, 10),
-            precio_lista: parseFloat(formData.precio_lista),
-            precio_oferta: parseFloat(formData.precio_oferta)
-          }]);
-
-        if (errProd) throw errProd;
-
-        mostrarNotificacion("¡Refacción guardada exitosamente!");
-      }
-
-      setShowForm(false);
-      setIdEdicion(null);
-      setImagenSeleccionada(null);
-      setFormData({
-        categoria: 'Motor', marca: '', nombre_comercial: '', descripcion: '', fabricante_original: '',
-        nivel_calidad: 'Premium', tiempo_duracion: '', stock: 1, precio_lista: 0, precio_oferta: 0,
-        establecimiento_id: tiendaActiva.id, tipo_vehiculo: 'Auto', marca_vehiculo: '', modelo: '', anio_vehiculo: '', imagen_url: '',
-        numero_parte: '', condicion: 'Nueva', garantia: 'Sin garantía'
+      // codigo_barras NO se manda a Java: se guarda aparte, directo en Supabase
+      const { codigo_barras: codigoBarras, ...datosParaJava } = formData;
+      const payloadCompleto = { ...datosParaJava, imagen_url: urlFinalImagen };
+      const urlFetch = idEdicion ? `https://backautored-production.up.railway.app/api/inventario/actualizar/${idEdicion}` : 'https://backautored-production.up.railway.app/api/inventario/agregar';
+      const metodoFetch = idEdicion ? 'PUT' : 'POST';
+      
+      const response = await fetch(urlFetch, {
+        method: metodoFetch,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payloadCompleto)
       });
-      inicializarPanel();
+
+      if (response.ok) {
+        let codigoGuardado = true;
+        if (codigoBarras?.trim() || idEdicion) {
+          codigoGuardado = await guardarCodigoBarras(codigoBarras, idEdicion, formData.numero_parte);
+        }
+        if (codigoGuardado) {
+          mostrarNotificacion(idEdicion ? "¡Producto actualizado correctamente!" : "¡Refacción guardada exitosamente!");
+        } else {
+          mostrarNotificacion("La pieza se guardó, pero no se pudo guardar el código de barras.", "error");
+        }
+        setShowForm(false); setIdEdicion(null); setImagenSeleccionada(null);
+        setFormData({
+          categoria: 'Motor', marca: '', nombre_comercial: '', descripcion: '', fabricante_original: '',
+          nivel_calidad: 'Premium', tiempo_duracion: '', stock: 1, precio_lista: 0, precio_oferta: 0,
+          establecimiento_id: miEstablecimiento.id, tipo_vehiculo: 'Auto', marca_vehiculo: '', modelo: '', anio_vehiculo: '', imagen_url: '',
+          numero_parte: '', codigo_barras: '', condicion: 'Nueva', garantia: ''
+        });
+        inicializarPanel();
+      } else {
+        mostrarNotificacion("Error en el servidor de Java.", "error");
+      }
     } catch (error) {
       mostrarNotificacion("Error: " + error.message, "error");
     }
@@ -383,86 +330,44 @@ export default function StoreDashboard() {
           </div>
           <div className="flex items-center gap-3">
             <span className="bg-green-50 border border-green-200 text-green-700 px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2">
-              Terminal Sincronizada (Supabase)
+              Terminal Sincronizada Automática
             </span>
           </div>
         </div>
 
         {/* PESTAÑAS */}
         <div className="flex border-b border-gray-200 mb-6 gap-4 overflow-x-auto">
-          <button onClick={() => setActiveTab('orders')} className={`py-3 px-4 text-sm font-bold border-b-2 whitespace-nowrap cursor-pointer ${activeTab === 'orders' ? 'border-autoblue text-autoblue' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
-            Cotizaciones Entrantes ({cotizaciones.length})
+          <button onClick={() => setActiveTab('orders')} className={`py-3 px-4 text-sm font-bold border-b-2 whitespace-nowrap ${activeTab === 'orders' ? 'border-autoblue text-autoblue' : 'border-transparent text-gray-500'}`}>
+            Cotizaciones Entrantes
           </button>
-          <button onClick={() => setActiveTab('catalog')} className={`py-3 px-4 text-sm font-bold border-b-2 whitespace-nowrap cursor-pointer ${activeTab === 'catalog' ? 'border-autoblue text-autoblue' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
-            Mi Inventario Local ({inventarioLocal.length})
+          <button onClick={() => setActiveTab('catalog')} className={`py-3 px-4 text-sm font-bold border-b-2 whitespace-nowrap ${activeTab === 'catalog' ? 'border-autoblue text-autoblue' : 'border-transparent text-gray-500'}`}>
+            Mi Inventario Local
           </button>
-          <button onClick={() => setActiveTab('global')} className={`py-3 px-4 text-sm font-bold border-b-2 whitespace-nowrap cursor-pointer ${activeTab === 'global' ? 'border-autoblue text-autoblue' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+          <button onClick={() => setActiveTab('global')} className={`py-3 px-4 text-sm font-bold border-b-2 whitespace-nowrap ${activeTab === 'global' ? 'border-autoblue text-autoblue' : 'border-transparent text-gray-500'}`}>
             Explorar Competencia
           </button>
         </div>
-
-        {/* CONTENIDO PRINCIPAL: COTIZACIONES ENTRANTES */}
-        {activeTab === 'orders' && (
-          <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm animate-fade-in">
-            <h3 className="font-bold text-lg text-gray-900 mb-1">Cotizaciones Entrantes</h3>
-            <p className="text-sm text-gray-500 mb-6 font-medium">
-              Solicitudes de presupuesto enviadas por clientes y talleres de la red.
-            </p>
-
-            {cotizaciones.length === 0 ? (
-              <div className="p-12 text-center text-gray-500 border-2 border-dashed border-gray-200 rounded-xl bg-gray-50">
-                <svg className="w-12 h-12 text-gray-300 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
-                </svg>
-                <h4 className="font-bold text-gray-800 text-base mb-1">No tienes cotizaciones pendientes</h4>
-                <p className="text-xs text-gray-400 max-w-sm mx-auto">
-                  Las solicitudes de refacciones enviadas por los compradores de tu zona aparecerán aquí automáticamente.
-                </p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
-                  <thead className="bg-gray-50 text-gray-500 font-bold text-xs uppercase border-b border-gray-200">
-                    <tr>
-                      <th className="p-4">Cliente</th>
-                      <th className="p-4">Refacción Solicitada</th>
-                      <th className="p-4">Vehículo</th>
-                      <th className="p-4 text-right">Acción</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {cotizaciones.map((cot) => (
-                      <tr key={cot.id} className="hover:bg-gray-50">
-                        <td className="p-4 font-bold text-gray-900">{cot.cliente_nombre || 'Comprador AutoRed'}</td>
-                        <td className="p-4 text-gray-700">{cot.pieza_nombre || 'Sin especificar'}</td>
-                        <td className="p-4 text-gray-500">{cot.vehiculo || 'N/A'}</td>
-                        <td className="p-4 text-right">
-                          <button className="bg-autoblue hover:bg-blue-900 text-white font-bold px-4 py-2 rounded-lg text-xs transition-colors">
-                            Responder
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        )}
 
         {/* CONTENIDO PRINCIPAL: INVENTARIO LOCAL */}
         {activeTab === 'catalog' && (
           <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm animate-fade-in">
             <div className="flex justify-between items-center mb-6">
-              <h3 className="font-bold text-lg text-gray-900">Gestión de Stock</h3>
+              <div>
+                <h3 className="font-bold text-lg text-gray-900">Gestión de Stock</h3>
+                <p className="text-xs text-gray-500 mt-0.5 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-green-500 inline-block"></span>
+                  Lector de códigos activo: escanea una caja para buscar la pieza o registrar una nueva
+                </p>
+              </div>
               <button onClick={() => {
                 setShowForm(!showForm);
                 if(showForm) setIdEdicion(null);
-              }} className={`border-2 px-4 py-2 rounded-lg font-bold text-sm flex items-center gap-2 cursor-pointer ${showForm ? 'border-gray-300 text-gray-500' : 'border-autoblue text-autoblue hover:bg-blue-50'}`}>
+              }} className={`border-2 px-4 py-2 rounded-lg font-bold text-sm flex items-center gap-2 ${showForm ? 'border-gray-300 text-gray-500' : 'border-autoblue text-autoblue'}`}>
                 {showForm ? 'Cancelar' : '+ Agregar Nueva Pieza'}
               </button>
             </div>
 
+            {/* 🔥 AQUÍ VA TU NUEVO CARGADOR DE CSV 🔥 */}
             {!showForm && miEstablecimiento && (
               <GestorExcel 
                 establecimientoId={miEstablecimiento.id} 
@@ -470,7 +375,7 @@ export default function StoreDashboard() {
               />
             )}
 
-            {/* FORMULARIO DE ALTA / EDICIÓN */}
+            {/* FORMULARIO ACTUALIZADO */}
             {showForm && (
               <form onSubmit={handleSubmit} className="mb-8 p-6 bg-gray-50 rounded-xl border border-gray-200 space-y-6 shadow-inner border-t-4 border-t-autoblue">
 
@@ -503,6 +408,7 @@ export default function StoreDashboard() {
                     </div>
                   </div>
 
+                  {/* NUEVOS INPUTS ADICIONALES DE ESPECIFICACIÓN */}
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
                     <div>
                       <label className="block text-xs font-black uppercase text-gray-500 mb-1">Número de Parte / OEM</label>
@@ -518,7 +424,12 @@ export default function StoreDashboard() {
                     </div>
                     <div>
                       <label className="block text-xs font-black uppercase text-gray-500 mb-1">Garantía del Vendedor</label>
-                      <select name="garantia" value={formData.garantia} onChange={handleInputChange} className="w-full bg-white border border-gray-200 rounded-lg p-2.5 text-sm">
+                      <select 
+                        name="garantia" 
+                        value={formData.garantia} 
+                        onChange={handleInputChange} 
+                        className="w-full bg-white border border-gray-200 rounded-lg p-2.5 text-sm"
+                      >
                         <option value="Sin garantía">Sin garantía</option>
                         <option value="15 días">15 días (Piezas eléctricas/Yonke)</option>
                         <option value="1 mes">1 mes</option>
@@ -527,6 +438,20 @@ export default function StoreDashboard() {
                         <option value="1 año">1 año (Fábrica)</option>
                       </select>
                     </div>
+                  </div>
+                  {/* CÓDIGO DE BARRAS / QR (se llena solo al escanear) */}
+                  <div className="mt-4">
+                    <label className="block text-xs font-black uppercase text-gray-500 mb-1">Código de Barras / QR <span className="lowercase font-normal text-autoblue">(Opcional — escanea la caja con el lector)</span></label>
+                    <input
+                      type="text"
+                      name="codigo_barras"
+                      data-scanner="true"
+                      value={formData.codigo_barras}
+                      onChange={handleInputChange}
+                      onKeyDown={(e) => { if (e.key === 'Enter') e.preventDefault(); }}
+                      className="w-full bg-white border border-gray-200 rounded-lg p-2.5 text-sm font-mono"
+                      placeholder="Escanea el código de la caja"
+                    />
                   </div>
                 </div>
 
@@ -567,7 +492,7 @@ export default function StoreDashboard() {
                   </div>
                 </div>
 
-                {/* SECCIÓN 3: PRECIOS Y FOTO */}
+                {/* SECCIÓN 3: PRECIOS */}
                 <div>
                   <h4 className="text-sm font-bold text-autoblue mb-3 border-b pb-1">3. Precios y Multimedia</h4>
                   <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -600,7 +525,7 @@ export default function StoreDashboard() {
                 </div>
 
                 <div className="flex justify-end pt-4 border-t">
-                  <button type="submit" className="bg-autoblue hover:bg-blue-900 text-white font-bold px-6 py-2.5 rounded-lg text-sm transition-colors cursor-pointer">
+                  <button type="submit" className="bg-autoblue hover:bg-blue-900 text-white font-bold px-6 py-2.5 rounded-lg text-sm transition-colors">
                     {idEdicion ? 'Actualizar Producto en BD' : 'Sincronizar a Base de Datos'}
                   </button>
                 </div>
@@ -617,31 +542,18 @@ export default function StoreDashboard() {
                 {inventarioLocal.map((item) => (
                   <div key={item.id} className="border border-gray-200 rounded-lg p-4 flex flex-col justify-between hover:border-autoblue transition-colors group bg-gray-100 shadow-sm">
                     <div className="flex gap-4">
-                      {/* Renderizado defensivo de la imagen */}
                       {item.pieza?.imagen_url ? (
-                        <img 
-                          src={item.pieza.imagen_url} 
-                          alt={item.pieza.nombre_comercial} 
-                          className="w-16 h-16 object-cover rounded-lg border border-gray-100 bg-gray-50"
-                          onError={(e) => {
-                            e.target.onerror = null; 
-                            e.target.style.display = 'none';
-                            if (e.target.nextSibling) e.target.nextSibling.style.display = 'flex';
-                          }}
-                        />
-                      ) : null}
-
-                      {/* Recuadro de respaldo si no hay imagen o falla al cargar */}
-                      <div 
-                        className={`w-16 h-16 rounded-lg bg-white flex items-center justify-center text-gray-400 font-black text-xl border border-gray-200 ${item.pieza?.imagen_url ? 'hidden' : 'flex'}`}
-                      >
-                        {item.pieza?.nombre_comercial?.charAt(0) || 'P'}
-                      </div>
-
+                        <img src={item.pieza.imagen_url} alt={item.pieza.nombre_comercial} className="w-16 h-16 object-cover rounded-lg border border-gray-100 bg-gray-50" />
+                      ) : (
+                        <div className="w-16 h-16 rounded-lg bg-white flex items-center justify-center text-gray-400 font-black text-xl border border-gray-200">
+                          {item.pieza?.nombre_comercial?.charAt(0)}
+                        </div>
+                      )}
                       <div>
                         <p className="font-bold text-gray-900 text-sm leading-tight line-clamp-2 group-hover:text-autoblue transition-colors">{item.pieza?.nombre_comercial}</p>
-                        <p className="text-gray-500 text-xs mt-1 font-medium">{item.pieza?.marca} {item.pieza?.modelo}</p>
+                        <p className="text-gray-500 text-xs mt-1 font-medium">{item.pieza?.marca} • {item.pieza?.modelo}</p>
                         
+                        {/* Pequeña etiqueta visual para el Número de Parte en la tarjeta local */}
                         {item.pieza?.numero_parte && (
                           <p className="text-[10px] text-autoblue font-mono bg-blue-50 border border-blue-100 px-1.5 py-0.5 rounded mt-1 w-max">
                             PN: {item.pieza.numero_parte}
@@ -666,10 +578,10 @@ export default function StoreDashboard() {
                         <p className="font-black text-red-600 text-lg">${item.precio_oferta}</p>
                       </div>
                       <div className="flex gap-2">
-                        <button onClick={() => cargarDatosParaEdicion(item)} className="text-blue-600 bg-white border border-gray-200 hover:bg-blue-50 font-bold px-3 py-1.5 rounded-lg text-xs transition-colors flex items-center gap-1 cursor-pointer">
+                        <button onClick={() => cargarDatosParaEdicion(item)} className="text-blue-600 bg-white border border-gray-200 hover:bg-blue-50 font-bold px-3 py-1.5 rounded-lg text-xs transition-colors flex items-center gap-1">
                           Editar
                         </button>
-                        <button onClick={() => confirmarEliminacion(item.id)} className="text-red-600 bg-white border border-gray-200 hover:bg-red-50 font-bold px-3 py-1.5 rounded-lg text-xs transition-colors flex items-center gap-1 cursor-pointer">
+                        <button onClick={() => confirmarEliminacion(item.id)} className="text-red-600 bg-white border border-gray-200 hover:bg-red-50 font-bold px-3 py-1.5 rounded-lg text-xs transition-colors flex items-center gap-1">
                           Eliminar
                         </button>
                       </div>
@@ -708,8 +620,9 @@ export default function StoreDashboard() {
                         <div>
                           {esMia && <span className="bg-autoblue text-white text-[9px] font-black uppercase px-2 py-0.5 rounded mb-1 inline-block">Tu Publicación</span>}
                           <p className="font-bold text-gray-900 text-sm leading-tight line-clamp-2">{item.pieza?.nombre_comercial}</p>
-                          <p className="text-gray-500 text-xs mt-1 font-medium">{item.pieza?.marca} {item.pieza?.modelo}</p>
+                          <p className="text-gray-500 text-xs mt-1 font-medium">{item.pieza?.marca} • {item.pieza?.modelo}</p>
                           
+                          {/* Muestra número de parte también en el catálogo de competencia */}
                           {item.pieza?.numero_parte && (
                             <p className="text-[10px] text-gray-500 font-mono mt-1">
                               No. Parte: {item.pieza.numero_parte}
@@ -727,7 +640,7 @@ export default function StoreDashboard() {
                         {esMia ? (
                           <button 
                             onClick={() => { setActiveTab('catalog'); cargarDatosParaEdicion(item); }} 
-                            className="text-autoblue bg-white border border-autoblue hover:bg-blue-100 font-bold px-3 py-1.5 rounded-lg text-xs transition-colors cursor-pointer"
+                            className="text-autoblue bg-white border border-autoblue hover:bg-blue-100 font-bold px-3 py-1.5 rounded-lg text-xs transition-colors"
                           >
                             Editar Mi Pieza
                           </button>
@@ -748,7 +661,7 @@ export default function StoreDashboard() {
           </div>
         )}
 
-        {/* MODAL Y NOTIFICACIÓN */}
+        {/* MODAL Y NOTIFICACIÓN (GLOBALES) */}
         <div className={`fixed top-24 left-1/2 z-[100] transform -translate-x-1/2 transition-all duration-500 ${notificacion.visible ? 'translate-y-0 opacity-100' : '-translate-y-12 opacity-0 pointer-events-none'}`}>
           <div className={`flex items-center gap-3 px-6 py-4 rounded-xl shadow-2xl text-white font-bold ${notificacion.tipo === 'exito' ? 'bg-green-600' : 'bg-red-600'}`}>
             {notificacion.mensaje}
