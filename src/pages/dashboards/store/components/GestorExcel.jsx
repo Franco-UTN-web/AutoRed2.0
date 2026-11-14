@@ -55,6 +55,19 @@ export default function GestorExcel({ establecimientoId, onUploadSuccess }) {
 
       let procesadosExitosos = 0;
       let erroresFila = 0;
+      let duplicadosOmitidos = 0;
+
+      // Códigos de barras que ya existen en esta tienda (para no duplicarlos)
+      const codigosExistentes = new Set();
+      const { data: existentes } = await supabase
+        .from('inventarios')
+        .select('piezas(codigo_barras)')
+        .eq('establecimiento_id', establecimientoId);
+      (existentes || []).forEach((r) => {
+        const pz = Array.isArray(r.piezas) ? r.piezas[0] : r.piezas;
+        const cod = pz?.codigo_barras?.toString().trim().toLowerCase();
+        if (cod) codigosExistentes.add(cod);
+      });
 
       // 3. Iterar filas e insertar en Supabase
       for (const fila of filas) {
@@ -92,6 +105,9 @@ export default function GestorExcel({ establecimientoId, onUploadSuccess }) {
           row['Nivel Calidad'] || row['Calidad'] || row['nivel_calidad'] || 'Premium';
         const imagen_url =
           row['URL Imagen'] || row['imagen_url'] || '';
+        const codigo_barras = String(
+          row['Código de Barras'] || row['Codigo de Barras'] || row['Código de Barras / QR'] || row['codigo_barras'] || ''
+        ).trim();
 
         const stock = parseInt(row['Stock'] || row['stock'] || 1, 10) || 0;
         const precio_lista = parseFloat(
@@ -118,6 +134,12 @@ export default function GestorExcel({ establecimientoId, onUploadSuccess }) {
           continue;
         }
 
+        // Omitir filas cuyo código de barras ya existe en la tienda (o está repetido dentro del mismo Excel)
+        if (codigo_barras && codigosExistentes.has(codigo_barras.toLowerCase())) {
+          duplicadosOmitidos++;
+          continue;
+        }
+
         // Generar UUIDs garantizados antes de insertar
         const nuevoPiezaId = crypto.randomUUID();
         const nuevoInventarioId = crypto.randomUUID();
@@ -139,7 +161,8 @@ export default function GestorExcel({ establecimientoId, onUploadSuccess }) {
             numero_parte: numParteLimpio,
             condicion: condicion.toString().trim(),
             garantia: garantia.toString().trim(),
-            imagen_url: imagen_url.toString().trim()
+            imagen_url: imagen_url.toString().trim(),
+            codigo_barras: codigo_barras || null
           }]);
 
         if (errPieza) {
@@ -166,6 +189,7 @@ export default function GestorExcel({ establecimientoId, onUploadSuccess }) {
           continue;
         }
 
+        if (codigo_barras) codigosExistentes.add(codigo_barras.toLowerCase());
         procesadosExitosos++;
       }
 
@@ -173,6 +197,8 @@ export default function GestorExcel({ establecimientoId, onUploadSuccess }) {
         setMensaje(
           `¡Carga masiva completada! Se registraron ${procesadosExitosos} refacciones exitosamente.${
             erroresFila > 0 ? ` (${erroresFila} filas tuvieron error).` : ''
+          }${
+            duplicadosOmitidos > 0 ? ` Se omitieron ${duplicadosOmitidos} filas con código de barras repetido.` : ''
           }`
         );
         setArchivo(null);
@@ -181,7 +207,11 @@ export default function GestorExcel({ establecimientoId, onUploadSuccess }) {
         
         if (onUploadSuccess) onUploadSuccess();
       } else {
-        setMensaje('No se encontraron refacciones nuevas (la fila de ejemplo de la plantilla se omite automáticamente).');
+        setMensaje(
+          duplicadosOmitidos > 0
+            ? `No se registró nada nuevo: ${duplicadosOmitidos} filas tenían un código de barras repetido.`
+            : 'No se encontraron refacciones nuevas (la fila de ejemplo de la plantilla se omite automáticamente).'
+        );
       }
 
     } catch (error) {
@@ -198,7 +228,7 @@ export default function GestorExcel({ establecimientoId, onUploadSuccess }) {
         <div>
           <h3 className="font-bold text-gray-800 text-lg">Carga Masiva de Inventario</h3>
           <p className="text-xs text-gray-500">
-            Sube tus refacciones usando nuestra plantilla oficial (la fila 3 de ejemplo se ignora automáticamente).
+            Sube tus refacciones usando nuestra plantilla oficial (la fila 3 de ejemplo se ignora automáticamente). Opcional: columna "Código de Barras" (formato Texto).
           </p>
         </div>
         <button 

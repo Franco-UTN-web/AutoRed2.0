@@ -46,6 +46,7 @@ export default function StoreDashboard() {
   const [cargando, setCargando] = useState(true);
   const [imagenSeleccionada, setImagenSeleccionada] = useState(null);
   const [idEdicion, setIdEdicion] = useState(null);
+  const [modoEscaneo, setModoEscaneo] = useState('buscar'); // 'buscar' | 'entrada' | 'salida'
 
   const navigate = useNavigate();
 
@@ -187,6 +188,29 @@ export default function StoreDashboard() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  // Suma o resta stock directo en Supabase (entrada +1 / salida -1), sin abrir el formulario
+  const ajustarStock = async (item, delta) => {
+    const nombre = item.pieza?.nombre_comercial || 'Pieza';
+    const actual = Number(item.stock) || 0;
+    const nuevo = actual + delta;
+
+    if (nuevo < 0) {
+      mostrarNotificacion(`"${nombre}" ya está en 0, no se puede restar más.`, 'error');
+      return;
+    }
+
+    // Se refleja de inmediato en pantalla; si la base falla, se revierte
+    setInventarioLocal(prev => prev.map(i => i.id === item.id ? { ...i, stock: nuevo } : i));
+
+    const { error } = await supabase.from('inventarios').update({ stock: nuevo }).eq('id', item.id);
+    if (error) {
+      setInventarioLocal(prev => prev.map(i => i.id === item.id ? { ...i, stock: actual } : i));
+      mostrarNotificacion('No se pudo actualizar el stock: ' + error.message, 'error');
+      return;
+    }
+    mostrarNotificacion(`${delta > 0 ? 'Entrada +1' : 'Salida −1'} · ${nombre} · Stock: ${nuevo}`);
+  };
+
   // --- ESCÁNER DE CÓDIGO DE BARRAS (lector USB/Bluetooth en modo teclado) ---
   const manejarEscaneo = (codigoCrudo) => {
     const codigo = codigoCrudo.trim();
@@ -209,14 +233,21 @@ export default function StoreDashboard() {
       return;
     }
 
-    // 2) Formulario cerrado y la pieza ya existe: abrimos su edición
+    // 2) Formulario cerrado y la pieza ya existe: según el modo, ajustamos stock o abrimos su edición
     if (existente) {
+      if (modoEscaneo === 'entrada') { ajustarStock(existente, 1); return; }
+      if (modoEscaneo === 'salida') { ajustarStock(existente, -1); return; }
       mostrarNotificacion(`Pieza encontrada: ${existente.pieza?.nombre_comercial}`);
       cargarDatosParaEdicion(existente);
       return;
     }
 
-    // 3) Formulario cerrado y código desconocido: abrimos un alta nueva con el código precargado
+    // 3) Formulario cerrado y código desconocido
+    if (modoEscaneo === 'salida') {
+      mostrarNotificacion(`El código ${codigo} no está en tu inventario.`, 'error');
+      return;
+    }
+    // (buscar / entrada) abrimos un alta nueva con el código precargado
     setIdEdicion(null);
     setImagenSeleccionada(null);
     setFormData({
@@ -308,6 +339,18 @@ export default function StoreDashboard() {
     if (!tiendaActiva) {
       mostrarNotificacion("Error: No se encontró tu tienda vinculada a esta cuenta.", "error");
       return;
+    }
+
+    // Evitar códigos de barras repetidos dentro de la misma tienda
+    const codigoNuevo = formData.codigo_barras?.trim().toLowerCase();
+    if (codigoNuevo) {
+      const repetida = inventarioLocal.find(item =>
+        item.id !== idEdicion && item.pieza?.codigo_barras?.trim().toLowerCase() === codigoNuevo
+      );
+      if (repetida) {
+        mostrarNotificacion(`Ese código de barras ya pertenece a "${repetida.pieza?.nombre_comercial}" en tu inventario.`, 'error');
+        return;
+      }
     }
 
     try {
@@ -518,6 +561,34 @@ export default function StoreDashboard() {
                 {showForm ? 'Cancelar' : '+ Agregar Nueva Pieza'}
               </button>
             </div>
+
+            {/* MODO DEL ESCÁNER */}
+            {!showForm && (
+              <div className="mb-6 flex flex-wrap items-center gap-3">
+                <span className="text-xs font-black uppercase text-gray-500">Modo del escáner:</span>
+                <div className="inline-flex rounded-lg border border-gray-200 overflow-hidden bg-white">
+                  {[
+                    { id: 'buscar', label: 'Buscar / Editar', activo: 'bg-autoblue text-white' },
+                    { id: 'entrada', label: 'Entrada (+1)', activo: 'bg-green-600 text-white' },
+                    { id: 'salida', label: 'Salida (−1)', activo: 'bg-red-600 text-white' },
+                  ].map(m => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => setModoEscaneo(m.id)}
+                      className={`px-3 py-1.5 text-xs font-bold cursor-pointer transition-colors ${modoEscaneo === m.id ? m.activo : 'text-gray-600 hover:bg-gray-50'}`}
+                    >
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+                {modoEscaneo !== 'buscar' && (
+                  <span className="text-xs text-gray-500">
+                    {modoEscaneo === 'entrada' ? 'Cada escaneo suma 1 al stock de la pieza.' : 'Cada escaneo resta 1 al stock (venta en mostrador).'}
+                  </span>
+                )}
+              </div>
+            )}
 
             {!showForm && miEstablecimiento && (
               <GestorExcel 
