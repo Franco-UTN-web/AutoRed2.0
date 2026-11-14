@@ -96,7 +96,7 @@ export default function Home() {
         
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10 text-center">
           <span className="inline-block bg-red-50 text-autored text-xs font-black px-4 py-2 rounded-full shadow-sm border border-red-100 mb-6 uppercase tracking-wider">
-            Tú escribes, nosotros Buscamos
+            Tú escribes, nosotros Buscamo
           </span>
           <h1 className="text-5xl md:text-7xl font-black tracking-tight mb-6 text-gray-900 leading-tight">
             La red automotriz <br className="hidden md:block" /> más <span className="text-transparent bg-clip-text bg-gradient-to-r from-autored to-red-500">inteligente</span>
