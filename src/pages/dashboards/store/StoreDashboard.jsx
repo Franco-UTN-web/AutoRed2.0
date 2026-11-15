@@ -5,6 +5,7 @@ import GestorExcel from './components/GestorExcel';
 import EtiquetaQR from './components/EtiquetaQR';
 import EscanerCamara from '../../../components/EscanerCamara';
 import FichaProducto from './components/FichaProducto';
+import { extraerIdInventario, pareceEnlaceAutoRed } from '../../../utils/qrAutoRed';
 import useScanner from '../../../hooks/useScanner';
 
 // --- DICCIONARIOS LOCALES ---
@@ -25,13 +26,6 @@ const marcasRefacciones = [
   "Dai", "Fritec", "Gates", "Genérica", "Gonher", "KYB", 
   "LUK", "NGK", "Roshfrans", "Valeo", "Wagner", "Mobil", "Purolator"
 ];
-
-// Un QR de AutoRed trae el id (UUID) del registro de inventarios, solo o dentro de la URL /producto/<id>
-const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
-const extraerIdInventario = (texto) => {
-  const m = String(texto || '').match(UUID_RE);
-  return m ? m[0].toLowerCase() : null;
-};
 
 export default function StoreDashboard() {
   
@@ -245,6 +239,13 @@ export default function StoreDashboard() {
       item.pieza?.codigo_barras?.toLowerCase() === c ||
       item.pieza?.numero_parte?.toLowerCase() === c
     );
+
+    // Parece un enlace / QR de AutoRed pero no se pudo leer el id (suele ser la distribución de teclado de la pistola):
+    // NO se usa como código de barras ni se abre un alta; se muestra lo que se leyó para poder corregirlo.
+    if (!idQR && pareceEnlaceAutoRed(codigo)) {
+      mostrarNotificacion(`No pude interpretar ese QR. Se leyó: "${codigo.slice(0, 60)}"`, 'error');
+      return;
+    }
 
     // 1) Formulario abierto: el código se guarda en el campo "Código de Barras"
     if (showForm) {
