@@ -7,7 +7,7 @@ import ReactMarkdown from 'react-markdown';
 // ==========================================
 const GROQ_API_KEY = import.meta.env.VITE_GROQ_KEY;
 const GROQ_ENDPOINT = 'https://api.groq.com/openai/v1/chat/completions';
-const GROQ_MODELO = 'llama-3.3-70b-versatile';
+const GROQ_MODELO = 'openai/gpt-oss-120b';
 const TIEMPO_MAXIMO_MS = 20000;
 const LIMITE_CARACTERES = 90;
 const MAX_HISTORIAL = 6; // mensajes previos que se envían como contexto
@@ -190,7 +190,8 @@ export default function VentanaCopiloto() {
         body: JSON.stringify({
           model: GROQ_MODELO,
           temperature: 0.4,
-          max_tokens: 500,
+          max_tokens: 1500,
+          reasoning_effort: 'low',
           response_format: { type: 'json_object' },
           messages: [
             { role: 'system', content: construirPromptSistema(rol) },
