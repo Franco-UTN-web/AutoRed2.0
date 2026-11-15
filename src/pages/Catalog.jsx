@@ -1,9 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import ProductCard from '../components/ProductCard';
-import EscanerCamara from '../components/EscanerCamara';
 import { supabase } from '../supabase';
-import { X, Check, ArrowRight, MessageSquare, ShieldCheck, Tag, Camera } from 'lucide-react';
+import { X, Check, ArrowRight, MessageSquare, ShieldCheck, Tag } from 'lucide-react';
 
 // Categorías rápidas para filtrado por sistema
 const CATEGORIAS_RAPIDAS = [
@@ -44,8 +43,6 @@ export default function Catalog() {
   const [alerta, setAlerta] = useState({ visible: false, mensaje: '' });
 
   const [searchParams] = useSearchParams();
-  const navigate = useNavigate();
-  const [camaraAbierta, setCamaraAbierta] = useState(false);
 
   // Estados dinámicos de búsqueda y filtro
   const [busqueda, setBusqueda] = useState(searchParams.get('q') || '');
@@ -126,34 +123,6 @@ export default function Catalog() {
     setTimeout(() => setAlerta({ visible: false, mensaje: '' }), 3000);
   };
 
-  // Resultado de la cámara: QR de AutoRed (abre la pieza) o código de barras del fabricante (busca en el catálogo)
-  const manejarResultadoCamara = (texto) => {
-    setCamaraAbierta(false);
-    const codigo = String(texto).trim();
-    if (!codigo) return;
-
-    // QR de una etiqueta AutoRed: trae el id del inventario, solo o dentro de la URL /producto/<id>
-    const idQR = codigo.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
-    if (idQR) {
-      navigate(`/producto/${idQR[0].toLowerCase()}`);
-      return;
-    }
-
-    // Código de barras del fabricante: se busca en el catálogo (se limpian los filtros para que no oculten el resultado)
-    setFiltroCategoria('Cualquiera');
-    setFiltroMarca('Cualquiera');
-    setFiltroMiVehiculo('');
-    setPrecioMax(5000);
-    setBusqueda(codigo);
-
-    const c = codigo.toLowerCase();
-    const hayCoincidencias = productos.some(item =>
-      (item.pieza?.codigo_barras || '').toLowerCase().includes(c) ||
-      (item.pieza?.numero_parte || '').toLowerCase().includes(c)
-    );
-    if (!hayCoincidencias) mostrarAlerta(`No encontramos piezas con el código ${codigo}.`);
-  };
-
   const toggleComparacion = (producto) => {
     const yaEsta = listaComparacion.find(p => p.id === producto.id);
     if (yaEsta) {
@@ -181,7 +150,6 @@ export default function Catalog() {
       const marcaVeh = item.marca_vehiculo || item.pieza?.marca_vehiculo || '';
       const modeloVeh = item.modelo || item.pieza?.modelo || '';
       const numParte = item.numero_parte || item.pieza?.numero_parte || '';
-      const codigoBarras = item.codigo_barras || item.pieza?.codigo_barras || '';
       const catItem = item.categoria || item.pieza?.categoria || '';
       const precioItem = item.precio_oferta || item.precio || item.precio_lista || 0;
       const activoItem = item.activo !== false && item.pieza?.activo !== false;
@@ -199,8 +167,7 @@ export default function Catalog() {
         marcaFab.toLowerCase().includes(textoBusqueda) ||
         marcaVeh.toLowerCase().includes(textoBusqueda) ||
         modeloVeh.toLowerCase().includes(textoBusqueda) ||
-        numParte.toLowerCase().includes(textoBusqueda) ||
-        codigoBarras.toLowerCase().includes(textoBusqueda);
+        numParte.toLowerCase().includes(textoBusqueda);
 
       const pasaMarca = filtroMarca === 'Cualquiera' || marcaVeh === filtroMarca;
       const pasaCategoria = filtroCategoria === 'Cualquiera' || catItem === filtroCategoria;
@@ -282,15 +249,6 @@ export default function Catalog() {
           </div>
         </div>
 
-        {camaraAbierta && (
-          <EscanerCamara
-            titulo="Buscar con la cámara"
-            ayuda="Escanea el código de barras de la caja o el QR de una etiqueta AutoRed para encontrar la pieza."
-            onResultado={manejarResultadoCamara}
-            onCerrar={() => setCamaraAbierta(false)}
-          />
-        )}
-
         {/* ALERTA FLOTANTE */}
         <div className={`fixed top-24 left-1/2 z-[100] transform -translate-x-1/2 transition-all duration-300 ${alerta.visible ? 'translate-y-0 opacity-100' : '-translate-y-10 opacity-0 pointer-events-none'}`}>
           <div className="bg-gray-900 text-white px-6 py-3 rounded-full shadow-2xl font-bold text-sm flex items-center gap-2">
@@ -305,24 +263,13 @@ export default function Catalog() {
           <div className="w-full md:w-64 flex-shrink-0 space-y-6">
             <div className="bg-white border border-gray-200 p-5 rounded-xl shadow-sm">
               <h3 className="text-sm font-black text-gray-900 uppercase tracking-wider mb-4">Búsqueda rápida</h3>
-              <div className="flex gap-2">
-                <input 
-                  type="text" 
-                  placeholder="Nombre, marca, N° de parte o código..." 
-                  value={busqueda} 
-                  onChange={(e) => setBusqueda(e.target.value)} 
-                  className="flex-1 min-w-0 bg-gray-50 border border-gray-200 text-gray-800 rounded-lg pl-3 pr-3 py-2.5 text-sm focus:border-autoblue focus:ring-1 focus:outline-none transition-all" 
-                />
-                <button
-                  type="button"
-                  onClick={() => setCamaraAbierta(true)}
-                  title="Buscar escaneando un código con la cámara"
-                  className="flex-shrink-0 bg-autoblue hover:bg-blue-900 text-white px-3 rounded-lg transition-colors cursor-pointer"
-                >
-                  <Camera size={18} />
-                </button>
-              </div>
-              <p className="text-[11px] text-gray-400 mt-2">Escanea el código de barras de la caja o el QR de una etiqueta AutoRed.</p>
+              <input 
+                type="text" 
+                placeholder="Ej. Bosch, Balatas..." 
+                value={busqueda} 
+                onChange={(e) => setBusqueda(e.target.value)} 
+                className="w-full bg-gray-50 border border-gray-200 text-gray-800 rounded-lg pl-3 pr-3 py-2.5 text-sm focus:border-autoblue focus:ring-1 focus:outline-none transition-all" 
+              />
             </div>
 
             <div className="bg-white border border-gray-200 p-5 rounded-xl shadow-sm sticky top-28">
