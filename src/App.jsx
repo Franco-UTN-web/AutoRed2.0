@@ -6,6 +6,7 @@ import Navbar from './components/Navbar';
 import ChatWindow from './components/ChatWindow';
 import Footer from './components/Footer';
 import ProtectedRoute from './components/ProtectedRoute';
+import EscanerRedireccion from './components/EscanerRedireccion';
 
 import SobreNosotros from './pages/SobreNosotros';
 import Home from './pages/Home';
@@ -108,6 +109,7 @@ function App() {
       <div className="min-h-screen flex flex-col bg-gray-50 text-gray-900 font-sans selection:bg-autoblue selection:text-white">
         
         <Navbar />
+        <EscanerRedireccion />
         
         <main className="flex-grow">
           <Routes>

@@ -229,6 +229,14 @@ export default function StoreDashboard() {
   const manejarEscaneo = (codigoCrudo) => {
     const codigo = codigoCrudo.trim();
     if (!codigo || !miEstablecimiento) return;
+
+    // Fuera de la pestaña de inventario solo se atienden los QR de AutoRed (abren la pieza)
+    if (activeTab !== 'catalog') {
+      const idEnOtraPestana = extraerIdInventario(codigo);
+      if (idEnOtraPestana) navigate(`/producto/${idEnOtraPestana}`);
+      return;
+    }
+
     const c = codigo.toLowerCase();
 
     const idQR = extraerIdInventario(codigo);
@@ -253,7 +261,13 @@ export default function StoreDashboard() {
       return;
     }
 
-    // QR de otra tienda (o de una pieza que ya no está en tu inventario): mostramos su ficha
+    // QR de AutoRed en modo Buscar: se abre la página de la pieza, igual que al escanearlo con el celular
+    if (idQR && modoEscaneo === 'buscar') {
+      navigate(`/producto/${idQR}`);
+      return;
+    }
+
+    // (Entrada / Salida) QR de otra tienda o de una pieza que ya no está en tu inventario: mostramos su ficha
     if (idQR && !existente) { setFichaId(idQR); return; }
 
     // 2) Formulario cerrado y la pieza ya existe: según el modo, ajustamos stock o abrimos su edición
@@ -284,9 +298,9 @@ export default function StoreDashboard() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  // Solo escucha el escáner cuando estás en la pestaña de inventario local
+  // El lector de mano escucha en todas las pestañas (en las que no son de inventario solo abre piezas por QR)
   useScanner(manejarEscaneo, {
-    enabled: activeTab === 'catalog' && !!miEstablecimiento && !camaraAbierta && !camaraFormulario && !fichaId && !qrEtiqueta
+    enabled: !!miEstablecimiento && !camaraAbierta && !camaraFormulario && !fichaId && !qrEtiqueta
   });
 
   // Resultado de la cámara: QR de AutoRed (id o URL con el id) o código de barras del fabricante
@@ -654,11 +668,13 @@ export default function StoreDashboard() {
                     </button>
                   ))}
                 </div>
-                {modoEscaneo !== 'buscar' && (
-                  <span className="text-xs text-gray-500">
-                    {modoEscaneo === 'entrada' ? 'Cada escaneo suma 1 al stock de la pieza.' : 'Cada escaneo resta 1 al stock (venta en mostrador).'}
-                  </span>
-                )}
+                <span className="text-xs text-gray-500">
+                  {modoEscaneo === 'buscar'
+                    ? 'Un QR de AutoRed abre la página de la pieza; un código de barras abre su edición.'
+                    : modoEscaneo === 'entrada'
+                      ? 'Cada escaneo suma 1 al stock de la pieza.'
+                      : 'Cada escaneo resta 1 al stock (venta en mostrador).'}
+                </span>
                 <button
                   type="button"
                   onClick={() => setCamaraAbierta(true)}

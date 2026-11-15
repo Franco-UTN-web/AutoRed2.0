@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import ProductCard from '../components/ProductCard';
 import EscanerCamara from '../components/EscanerCamara';
+import useEsTienda from '../hooks/useEsTienda';
 import { supabase } from '../supabase';
 import { X, Check, ArrowRight, MessageSquare, ShieldCheck, Tag, Camera } from 'lucide-react';
 
@@ -46,6 +47,7 @@ export default function Catalog() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const [camaraAbierta, setCamaraAbierta] = useState(false);
+  const { esTienda } = useEsTienda(); // la búsqueda con cámara es solo para tiendas
 
   // Estados dinámicos de búsqueda y filtro
   const [busqueda, setBusqueda] = useState(searchParams.get('q') || '');
@@ -282,7 +284,7 @@ export default function Catalog() {
           </div>
         </div>
 
-        {camaraAbierta && (
+        {esTienda && camaraAbierta && (
           <EscanerCamara
             titulo="Buscar con la cámara"
             ayuda="Escanea el código de barras de la caja o el QR de una etiqueta AutoRed para encontrar la pieza."
@@ -308,21 +310,26 @@ export default function Catalog() {
               <div className="flex gap-2">
                 <input 
                   type="text" 
+                  data-scanner="true"
                   placeholder="Nombre, marca, N° de parte o código..." 
                   value={busqueda} 
                   onChange={(e) => setBusqueda(e.target.value)} 
                   className="flex-1 min-w-0 bg-gray-50 border border-gray-200 text-gray-800 rounded-lg pl-3 pr-3 py-2.5 text-sm focus:border-autoblue focus:ring-1 focus:outline-none transition-all" 
                 />
-                <button
-                  type="button"
-                  onClick={() => setCamaraAbierta(true)}
-                  title="Buscar escaneando un código con la cámara"
-                  className="flex-shrink-0 bg-autoblue hover:bg-blue-900 text-white px-3 rounded-lg transition-colors cursor-pointer"
-                >
-                  <Camera size={18} />
-                </button>
+                {esTienda && (
+                  <button
+                    type="button"
+                    onClick={() => setCamaraAbierta(true)}
+                    title="Buscar escaneando un código con la cámara"
+                    className="flex-shrink-0 bg-autoblue hover:bg-blue-900 text-white px-3 rounded-lg transition-colors cursor-pointer"
+                  >
+                    <Camera size={18} />
+                  </button>
+                )}
               </div>
-              <p className="text-[11px] text-gray-400 mt-2">Escanea el código de barras de la caja o el QR de una etiqueta AutoRed.</p>
+              {esTienda && (
+                <p className="text-[11px] text-gray-400 mt-2">Escanea el código de barras de la caja o el QR de una etiqueta AutoRed.</p>
+              )}
             </div>
 
             <div className="bg-white border border-gray-200 p-5 rounded-xl shadow-sm sticky top-28">
