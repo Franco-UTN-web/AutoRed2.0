@@ -4,6 +4,7 @@ import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 import { supabase } from '../supabase';
+import QRProducto from '../components/QRProducto';
 
 // Íconos de Leaflet para Vite
 import icon from 'leaflet/dist/images/marker-icon.png';
@@ -307,6 +308,13 @@ export default function ProductDetail() {
                   </div>
                 )}
               </div>
+
+              {/* QR de la pieza */}
+              <QRProducto
+                inventarioId={productoPrincipal.id}
+                nombre={pieza.nombre_comercial || productoPrincipal.nombre}
+                numeroParte={pieza.numero_parte}
+              />
 
               {/* Botón de Acción */}
               <div className="flex flex-col sm:flex-row gap-4 mt-auto">
