@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react';
 import { supabase } from '@/supabase';
 import GestorExcel from './components/GestorExcel';
 import EtiquetaQR from './components/EtiquetaQR';
-import EscanerCamara from './components/EscanerCamara';
+import EscanerCamara from '../../../components/EscanerCamara';
 import FichaProducto from './components/FichaProducto';
 import useScanner from '../../../hooks/useScanner';
 
@@ -60,6 +60,7 @@ export default function StoreDashboard() {
   const [qrEtiqueta, setQrEtiqueta] = useState(null);   // pieza cuya etiqueta QR se muestra
   const [camaraAbierta, setCamaraAbierta] = useState(false);
   const [fichaId, setFichaId] = useState(null);           // id de inventarios que se muestra en la ficha
+  const [camaraFormulario, setCamaraFormulario] = useState(false); // cámara para capturar el código de barras en el formulario
 
   const navigate = useNavigate();
 
@@ -285,7 +286,7 @@ export default function StoreDashboard() {
 
   // Solo escucha el escáner cuando estás en la pestaña de inventario local
   useScanner(manejarEscaneo, {
-    enabled: activeTab === 'catalog' && !!miEstablecimiento && !camaraAbierta && !fichaId && !qrEtiqueta
+    enabled: activeTab === 'catalog' && !!miEstablecimiento && !camaraAbierta && !camaraFormulario && !fichaId && !qrEtiqueta
   });
 
   // Resultado de la cámara: QR de AutoRed (id o URL con el id) o código de barras del fabricante
@@ -305,6 +306,27 @@ export default function StoreDashboard() {
       setFichaId(existente.id);
     } else {
       mostrarNotificacion(`El código ${String(texto).trim()} no está en tu inventario.`, 'error');
+    }
+  };
+
+  // Cámara abierta desde el formulario: el código leído se guarda en el campo "Código de Barras"
+  const manejarCamaraFormulario = (texto) => {
+    setCamaraFormulario(false);
+    const codigo = String(texto).trim();
+    if (!codigo) return;
+    if (extraerIdInventario(codigo)) {
+      mostrarNotificacion('Ese QR es una etiqueta de AutoRed, no un código de barras del fabricante.', 'error');
+      return;
+    }
+    setFormData(prev => ({ ...prev, codigo_barras: codigo }));
+    const c = codigo.toLowerCase();
+    const existente = inventarioLocal.find(item =>
+      item.id !== idEdicion && item.pieza?.codigo_barras?.trim().toLowerCase() === c
+    );
+    if (existente) {
+      mostrarNotificacion(`Ese código ya existe en tu inventario: ${existente.pieza?.nombre_comercial}`, 'error');
+    } else {
+      mostrarNotificacion(`Código capturado: ${codigo}`);
     }
   };
 
@@ -714,17 +736,26 @@ export default function StoreDashboard() {
                   </div>
                   {/* CÓDIGO DE BARRAS / QR (se llena solo al escanear) */}
                   <div className="mt-4">
-                    <label className="block text-xs font-black uppercase text-gray-500 mb-1">Código de Barras / QR <span className="lowercase font-normal text-autoblue">(Opcional — escanea la caja con el lector)</span></label>
-                    <input
-                      type="text"
-                      name="codigo_barras"
-                      data-scanner="true"
-                      value={formData.codigo_barras}
-                      onChange={handleInputChange}
-                      onKeyDown={(e) => { if (e.key === 'Enter') e.preventDefault(); }}
-                      className="w-full bg-white border border-gray-200 rounded-lg p-2.5 text-sm font-mono"
-                      placeholder="Escanea el código de la caja"
-                    />
+                    <label className="block text-xs font-black uppercase text-gray-500 mb-1">Código de Barras / QR <span className="lowercase font-normal text-autoblue">(Opcional — escanea la caja con el lector o la cámara)</span></label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        name="codigo_barras"
+                        data-scanner="true"
+                        value={formData.codigo_barras}
+                        onChange={handleInputChange}
+                        onKeyDown={(e) => { if (e.key === 'Enter') e.preventDefault(); }}
+                        className="flex-1 min-w-0 bg-white border border-gray-200 rounded-lg p-2.5 text-sm font-mono"
+                        placeholder="Escanea el código de la caja"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setCamaraFormulario(true)}
+                        className="flex-shrink-0 border-2 border-autoblue text-autoblue hover:bg-blue-50 px-3 rounded-lg font-bold text-xs cursor-pointer"
+                      >
+                        Usar cámara
+                      </button>
+                    </div>
                   </div>
                 </div>
 
@@ -960,6 +991,15 @@ export default function StoreDashboard() {
 
         {camaraAbierta && (
           <EscanerCamara onResultado={manejarResultadoCamara} onCerrar={() => setCamaraAbierta(false)} />
+        )}
+
+        {camaraFormulario && (
+          <EscanerCamara
+            titulo="Escanear código de barras"
+            ayuda="Apunta al código de barras de la caja del fabricante."
+            onResultado={manejarCamaraFormulario}
+            onCerrar={() => setCamaraFormulario(false)}
+          />
         )}
 
         {fichaId && (
