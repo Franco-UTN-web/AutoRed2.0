@@ -1,16 +1,42 @@
-# React + Vite
+# AUTORED
+***
+## DESCRIPCIÓN
+AutoRed es una plataforma web inteligente que centraliza la información de refaccionarias y distribuidoras para optimizar la gestión de inventarios y la búsqueda de autopartes. Permite administrar el stock en tiempo real incorporando integración IoT mediante un lector de código QR para el registro ágil de productos, realizar búsquedas con filtros avanzados (marca, modelo, fabricante, precio y ubicación) e integrar un chatbot con IA que sugiere piezas compatibles, evalúa la vida útil y ofrece alternativas ante la falta de inventario, todo bajo un entorno digital seguro.
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+## OBJETIVO
+Desarrollar la plataforma web inteligente AutoRed centralizada y segura, que optimice la administración de inventarios en tiempo real y agilice la localización e interconexión de autopartes entre refaccionarias, distribuidores y compradores.
 
-Currently, two official plugins are available:
+## FUNCIONALIDADES 
+- [ ] REGISTRO E INICIO DE SESIÓN DE USUARIOS
+- [ ] CONSULTA DEL CATÁLOGO DE REFACCIONES
+- [ ] REGISTRO DE REFACCIONARIAS
+- [ ] ALTA Y GESTIÓN DE PRODUCTOS
+- [ ] CONSULTA DE SUCURSALES
+- [ ] CONTACTO DIRECTO CON EL DISTRIBUIDOR VÍA WHATSAPP
+- [ ] COMPARACIÓN DE PRODUCTOS DE LA MISMA CATEGORÍA
+- [ ] CHATBOT CON INTELIGENCIA ARTIFICIAL
+- [ ] REGISTRO DE PRODUCTOS MEDIANTE CÓDIGO QR
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## EQUIPO DE DESARROLLO 
++ CAMACHO ONTIVEROS DIEGO
++ FRANCO MONTOYA ADOLFO JULIANO
++ JARQUÍN SÁNCHEZ JOSÉ DE JESÚS
++ MARTINEZ FLORES JOCCELIN
++ MARTINEZ RAMIREZ DESSIRE SHERESADA
++ ROBLERO VILLAGOMEZ JONATHAN EMIR
 
-## React Compiler
+## PILA TECNOLÓGICA 
++ React (Vite)
++ SupaBase
++ Java Spring Boot
++ API de mapas (Leaflet)
++ API de Gemini
++ Intellij IDEA
++ Visual Studio Code
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## FECHAS
 
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+#### INICIO
++ 1 de Septiembre de 2026
+#### FIN
++ 27 de Noviembre de 2026
