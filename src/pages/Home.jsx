@@ -6,7 +6,28 @@ export default function Home() {
   const [destacados, setDestacados] = useState([]);
   const [topTiendas, setTopTiendas] = useState([]); 
   const [rolUsuario, setRolUsuario] = useState('invitado');
+  
+  // Estados para el buscador principal
+  const [busqueda, setBusqueda] = useState('');
+  const [marcaSeleccionada, setMarcaSeleccionada] = useState('Todas las marcas');
+
   const navigate = useNavigate();
+
+  // Manejador de búsqueda (funciona con Enter y al clic en Buscar Pieza)
+  const handleBuscar = (e) => {
+    if (e) e.preventDefault();
+
+    const params = new URLSearchParams();
+    if (busqueda.trim()) {
+      params.set('q', busqueda.trim());
+    }
+    if (marcaSeleccionada && marcaSeleccionada !== 'Todas las marcas') {
+      params.set('marca', marcaSeleccionada);
+    }
+
+    const queryString = params.toString();
+    navigate(queryString ? `/catalogo?${queryString}` : '/catalogo');
+  };
 
   useEffect(() => {
     const cargarSesionYDatos = async () => {
@@ -105,14 +126,19 @@ export default function Home() {
             Encuentra piezas, compara refaccionarias y optimiza el mantenimiento de tu vehículo en una sola plataforma. Sin intermediarios.
           </p>
           
-          {/* Buscador Principal Mejorado */}
-          <div className="max-w-4xl mx-auto bg-white p-3 rounded-2xl border border-gray-200 shadow-xl flex flex-col md:flex-row gap-3 transition-transform hover:-translate-y-1 duration-300">
+          {/* Buscador Principal Mejorado (Envuelto en <form> para soportar Enter y Submit) */}
+          <form 
+            onSubmit={handleBuscar}
+            className="max-w-4xl mx-auto bg-white p-3 rounded-2xl border border-gray-200 shadow-xl flex flex-col md:flex-row gap-3 transition-transform hover:-translate-y-1 duration-300"
+          >
             <div className="flex-1 relative">
               <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
                 <svg className="h-5 w-5 text-autoblue animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"></path></svg>
               </div>
               <input 
                 type="text" 
+                value={busqueda}
+                onChange={(e) => setBusqueda(e.target.value)}
                 placeholder="Ej. Balatas delanteras, Filtro de aceite..." 
                 className="w-full bg-gray-50 border border-gray-200 text-gray-900 rounded-xl pl-11 pr-4 py-4 focus:outline-none focus:ring-2 focus:ring-autoblue font-medium transition-all" 
               />
@@ -122,11 +148,19 @@ export default function Home() {
               <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
                 <svg className="h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path></svg>
               </div>
-              <select className="w-full bg-gray-50 text-gray-700 rounded-xl pl-11 pr-4 py-4 border border-gray-200 focus:outline-none focus:ring-2 focus:ring-autoblue font-bold appearance-none cursor-pointer">
-                <option>Todas las marcas</option>
-                <option>Volkswagen</option>
-                <option>Nissan</option>
-                <option>Chevrolet</option>
+              <select 
+                value={marcaSeleccionada}
+                onChange={(e) => setMarcaSeleccionada(e.target.value)}
+                className="w-full bg-gray-50 text-gray-700 rounded-xl pl-11 pr-4 py-4 border border-gray-200 focus:outline-none focus:ring-2 focus:ring-autoblue font-bold appearance-none cursor-pointer"
+              >
+                <option value="Todas las marcas">Todas las marcas</option>
+                <option value="Volkswagen">Volkswagen</option>
+                <option value="Nissan">Nissan</option>
+                <option value="Chevrolet">Chevrolet</option>
+                <option value="Ford">Ford</option>
+                <option value="Toyota">Toyota</option>
+                <option value="Honda">Honda</option>
+                <option value="Universal">Universal</option>
               </select>
               <div className="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none">
                 <svg className="h-4 w-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
@@ -134,12 +168,12 @@ export default function Home() {
             </div>
 
             <button 
-              onClick={() => navigate('/catalogo')}
-              className="bg-autoblue hover:bg-blue-900 text-white px-10 py-4 rounded-xl font-black transition-colors shadow-md text-sm tracking-wider uppercase flex items-center justify-center gap-2 shrink-0"
+              type="submit"
+              className="bg-autoblue hover:bg-blue-900 text-white px-10 py-4 rounded-xl font-black transition-colors shadow-md text-sm tracking-wider uppercase flex items-center justify-center gap-2 shrink-0 cursor-pointer"
             >
               Buscar Pieza
             </button>
-          </div>
+          </form>
 
           {/* Carrusel de Marcas */}
           <div className="mt-12 pt-8 border-t border-gray-100/50">
